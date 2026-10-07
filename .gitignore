@@ -1,0 +1,6 @@
+.vibemind/
+.venv/
+__pycache__/
+node_modules/
+.cache/
+dist/

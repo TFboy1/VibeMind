@@ -1,0 +1,15 @@
+{
+  "name": "vibemind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "面向 Qoder、WorkBuddy 和 TRAE 的中文伴学 Skill 与轻量 CLI",
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check skills/vibemind/scripts/vibemind.mjs"
+  },
+  "license": "MIT"
+}
