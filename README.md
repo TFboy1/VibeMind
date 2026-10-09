@@ -12,7 +12,7 @@
 
 <br/>
 
-[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install%20Skill-00C853?style=for-the-badge&logo=hackthebox&logoColor=white)](#安装)
+[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install%20Skill-00C853?style=for-the-badge&logo=hackthebox&logoColor=white)](https://skills.sh/tfboy1/vibemind/vibemind)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.20.0-3C873A?style=for-the-badge&logo=nodedotjs&logoColor=white)](#运行要求)
 [![License](https://img.shields.io/badge/License-MIT-60A5FA?style=for-the-badge)](LICENSE)
 [![爱发电](https://img.shields.io/badge/爱发电-Support%20Me-FF69B4?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://www.ifdian.net/item/1a20ed042f0711f1865a52540025c377)
@@ -22,26 +22,28 @@
 
 **让用户参与设计，让 AI 实现，把真实项目变成能看懂、能接手的代码。**
 
-面向 Qoder、WorkBuddy、TRAE 的中文伴学 Skill ＋轻量 CLI。<br/>
+面向 Qoder、WorkBuddy、TRAE 的中文伴学 Skill ＋本地 MCP 与 CLI。<br/>
 沿用你的 AI 工具和模型，在真实项目里积累知识卡与设计思考。
 
 </div>
 
 ## VibeMind 是什么
 
-VibeMind 把学习优先的教学流程和可靠的本地状态管理结合起来：Skill 引导思考、解释与实现，CLI 保存学习档案、项目地图、知识卡和未完成决定。学习记录保存在当前项目；无需额外账户、模型 API 或后台服务。
+VibeMind 把伴学流程和跨项目记忆结合起来：Skill 引导思考与实现，本地 MCP/CLI 共用 SQLite 记忆图谱。个人档案、知识卡和学习证据保存在用户目录；项目内只保留身份文件。无需额外账户或模型 API，MCP 进程由宿主自动启动和关闭。
 
 ## 怎么学
 
 用户说出需求和思路，AI 结合实际项目解释、讨论取舍，再实现明确授权的方案。不了解概念时直接讲清楚；可以说“给我建议”“跳过这次练习”“直接实现”。用户水平按实际交流、具体话题判断，没有开场分级问卷。
 
-每个项目保留学习档案、项目地图、知识卡和未完成决定。知识卡连接实际代码位置和设计理由，区分“AI 解释过”和“用户已有应用证据”。切换工具时，对同一项目重新调用 VibeMind，可继续已有进度。
+项目地图、项目观察、知识卡和未完成决定按项目隔离。通用偏好和概念讲解历史跨项目共享，图谱连接卡片、概念和来源证据，区分“AI 解释过”与“用户已有应用证据”。
+
+**已经解释过的概念，默认不重复解释。** 每次讲解前查询精确概念 ID 或明确别名，已解释就直接讨论本次应用和新差异；没有应用证据也不会触发重讲。用户要求复习或仍不理解时可以再讲。旧卡先核对原文，子概念和模糊候选不会被误判为已解释。
 
 ## 运行要求
 
 - Node.js **22.20.0 或更新版本**，与当前 skills CLI 的最低要求一致。
 - 能读取项目文件、运行本地命令的 AI 工具。写入项目仍遵循宿主权限。
-- CLI 仅使用 Node 标准库，无第三方运行依赖；使用 skills.sh 安装时还需 npx。
+- CLI 仅使用 Node 标准库（包含 SQLite），无第三方运行依赖；skills.sh 安装需要 npx。MCP 服务另需在仓库执行一次 `npm ci` 安装官方 SDK。
 
 ## 安装
 
@@ -79,13 +81,16 @@ npx skills add TFboy1/VibeMind --skill vibemind --agent trae-cn --copy
 
 # TRAE 国际版
 npx skills add TFboy1/VibeMind --skill vibemind --agent trae --copy
+
+# Codex 用户级安装
+npx skills add TFboy1/VibeMind --skill vibemind --agent codex --global --copy
 ```
 
 `--copy` 使用普通文件复制，便于 Windows 安装。默认是项目级安装，不自动修改全局配置或 Hook。[skills CLI 文档](https://github.com/vercel-labs/skills)
 
 #### 导入完整 ZIP：适合 WorkBuddy 与原生技能入口
 
-1. [下载 VibeMind 技能包](https://github.com/TFboy1/VibeMind/releases/latest/download/vibemind-0.1.0.zip)。
+1. 从当前 0.2.0 源码构建完整技能 ZIP，方法见下方。旧 0.1.0 包仍使用项目 JSON，升级前不要与新 MCP 混用。
 2. 在 WorkBuddy 的“技能 → 添加技能 → 上传技能”入口导入该 ZIP；Qoder、TRAE 支持原生导入时也可使用同一个包。
 3. 确认出现 `vibemind`，在目标项目中选择它或用自然语言启用。
 
@@ -115,12 +120,33 @@ git clone https://github.com/TFboy1/VibeMind.git
 
 ```powershell
 New-Item -ItemType Directory -Path dist -Force | Out-Null
-Compress-Archive -Path .\skills\vibemind\* -DestinationPath .\dist\vibemind-0.1.0.zip -Force
+Compress-Archive -Path .\skills\vibemind\* -DestinationPath .\dist\vibemind-0.2.0.zip -Force
 ```
 
 </details>
 
 完成安装后，在目标项目的宿主技能入口选择 VibeMind，或明确调用它。实际加载入口随工具版本而异。
+
+### 本地 MCP：配置一次，跨项目共用记忆
+
+把完整仓库保留在固定目录，在仓库运行一次 `npm ci`。在支持 stdio MCP 的宿主添加下列配置，替换实际仓库绝对路径；Windows 可用 `D:/pycharmProject/VibeMind/scripts/mcp.mjs`，宿主需能找到 Node.js 22.20+。
+
+```json
+{
+  "mcpServers": {
+    "vibemind": {
+      "command": "node",
+      "args": ["/absolute/path/to/VibeMind/scripts/mcp.mjs"]
+    }
+  }
+}
+```
+
+宿主通过标准输入输出管理进程，无需 HTTP 服务或端口。多个工具各自启动进程，共用默认 `~/.vibemind/memory.sqlite`。更换位置时在各宿主配置相同的绝对 `VIBEMIND_HOME`；默认使用当前操作系统用户目录。
+
+Skill ZIP 包含独立 CLI；MCP 从完整仓库运行，不能只上传 SKILL.md 或单独复制 MCP 入口。Skill 优先使用可用的 MCP，缺少 MCP 时通过 CLI 接续同一数据库。旧 Skill 安装应升级，避免旧工具继续写 JSON。
+
+连接 MCP 或安装 Skill 本身不启用项目伴学。stdout 只输出 MCP 协议；日志和 Node 22 的 SQLite 警告在 stderr。由用户明确启用 VibeMind 后才创建项目记录。
 
 ## 开始使用
 
@@ -152,9 +178,15 @@ node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project --topic 跨域
 node skills/vibemind/scripts/vibemind.mjs pause --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
+node skills/vibemind/scripts/vibemind.mjs user
+node skills/vibemind/scripts/vibemind.mjs projects
+node skills/vibemind/scripts/vibemind.mjs knowledge --concept-id cors
+node skills/vibemind/scripts/vibemind.mjs knowledge --topic 跨域 --limit 20 --depth 2
+node skills/vibemind/scripts/vibemind.mjs context --project-id <项目UUID>
+node skills/vibemind/scripts/vibemind.mjs backup --output /absolute/path/to/backup.sqlite
 ```
 
-读取不写入。`context` 默认输出 Markdown，加 `--json` 输出 JSON；其他命令输出 JSON。失败写入 stderr 并返回退出码 1。
+读取不写入、不迁移。context 默认 Markdown，`--json` 和其他命令返回 JSON。错误在 stderr、退出码 1；Node 22 SQLite 警告也可能出现在 stderr。MCP 参数 projectPath/projectId、topic/conceptId 对应 CLI 参数，失败为 `isError: true`。
 
 ### 更新记录
 
@@ -195,31 +227,39 @@ $vibemindInput = @'
 $vibemindInput | & node $vibemindCli record --cwd $vibemindProject
 ```
 
-卡片和决定按稳定 ID 更新，未提交的记录保留。`profile`、`projectMap` 替换各自文本，保存前整合仍有效的观察与地图。写入版本冲突时重新读取并整合内容；暂停后 record 会被拒绝。完整格式见 [记录规范](skills/vibemind/references/records.md)。
+卡片与决定按稳定 ID 更新，未提交记录保留。profile 是当前项目观察，projectMap 是地图；替换前整合旧内容。通用档案另用 record-user，输入 expectedRevision（刚读取的 userRevision）和 profile。版本冲突重读并整合，暂停后拒绝项目 record。
+
+record 还支持 concepts、links、evidence。实际讲解后及时保存 explained 证据及概念 ID、范围、摘要和来源卡片；实际应用另存 applied，不能覆盖解释证据。context 主题查询的 `learning.alreadyExplained` 或 knowledge 的 `alreadyExplained` 指示是否跳过基础解释。完整示例及 MCP 参数见 [记录规范](skills/vibemind/references/records.md)。
 
 ## 存储与故障恢复
 
-项目内 `.vibemind/state.json` 是唯一活动数据源，Markdown 在查看时生成。更新先备份旧状态，再原子替换文件；版本检查及项目锁避免旧会话覆盖最新记录。目录定位识别 Git/worktree 边界，拒绝符号链接状态路径。
+唯一活动记忆源是用户目录 SQLite；项目内 `.vibemind/project.json` 只有格式版本和 projectId。用户和项目分别维护 revision；版本检查、图谱/记录更新和上一版快照在同一事务内完成，使用默认 DELETE 回滚日志、FULL 同步和 3 秒锁等待。Git/worktree 定位、身份及数据库路径保留链接保护。
+
+首次 init 校验并导入旧 state.json，保留原文件和 backups 的字节、暂停状态、卡片及全部未完成决定。旧 profile 仍属于项目观察，读取不迁移。旧卡缺少结构化字段时先核对原文，不能把所有旧卡自动标为已解释。
+
+移动项目按 ID 接续，下一次 init/写入同步登记路径。原登记目录仍存在的复制项目会报告 ID 冲突，明确创建独立项目时用 `init --new-project`；项目记录从空状态开始，共享学习历史保留。删除项目目录不删除数据库记忆，可用 projects 和 context --project-id 查看。
 
 建议在你自己的项目中把 `.vibemind/` 加入 `.gitignore`。CLI 不会代替你编辑忽略规则。学习数据由宿主读取时会进入其模型上下文，沿用宿主的数据设置；VibeMind 不额外上传记录。
 
-- **版本冲突**：重新读取 context，整合新内容后提交。
-- **锁冲突**：先确认是否有其他写入；不能根据锁文件年龄自动抢占。进程异常退出时，读取 `.lock` 的 PID，确认该写入进程已退出后，仅人工删除锁文件。
-- **状态损坏或版本不支持**：保留文件，检查错误与备份；init 不会清空损坏状态。
-- **备份或写入失败**：原状态保留。排除文件系统问题后，重新读取版本再试。
-- **锁释放失败**：状态可能已保存，先用 status 核实，避免重复提交。
+- **版本冲突**：重读 context/user 并整合，不能只换 revision。
+- **锁冲突**：数据库等待最多 3 秒，不频繁轮询或抢锁；初始化项目锁遗留时需核实 PID 已退出，再人工删除。
+- **旧 JSON 又被修改**：报告 LEGACY_CHANGED，不静默覆盖；升级旧工具，保留旧文件并核对整合，流程见记录规范。
+- **损坏或版本不支持**：保留文件，不重置或创建空记录替代。
+- **备份/写入失败**：事务回滚或保留已有数据，排除问题后重读；身份锁释放失败先用 status 核实。
 
-不直接编辑活动 JSON，也没有自动重置或备份恢复写回命令。人工恢复前应备份当前文件、验证所选备份并确认没有写入进程。
+上一版快照在 snapshots 表。独立备份使用 backup 命令的 SQLite 在线备份接口，不直接复制活动数据库；已有目的文件不覆盖。恢复前停止全部宿主进程，保留现有数据库并校验备份；不直接编辑活动数据库/身份文件，没有自动重置或恢复写回命令。
 
 ## 验证
 
 ```sh
+npm ci
 node --check skills/vibemind/scripts/vibemind.mjs
+node --check scripts/mcp.mjs
 node --test
 npx skills add . --list
 ```
 
-测试使用 Node 内置运行器和临时项目，覆盖幂等初始化、稳定 ID 更新、只读上下文、长记录中的未完成决定、暂停恢复、版本冲突、真实进程并发、损坏状态、备份与原子写入失败、中文路径、Git/worktree 隔离和安装路径 junction。
+测试使用隔离的临时用户目录，覆盖跨项目档案、精确/别名解释状态、候选/子概念、两跳查询、幂等更新、只读恢复、全部决定、暂停、旧 JSON/BOM 迁移、事务回滚、备份、移动/复制、中文路径和 Git/worktree/junction。真实 stdio 测试覆盖工具发现、旧/现代协议、两个进程并发、关闭与重启。
 
 自动测试检查程序行为，教学质量由宿主模型及实际对话决定。人工教学验收：
 
@@ -233,6 +273,9 @@ npx skills add . --list
 | 长记录后重启或换工具 | 恢复全部未完成决定，不把重启当作授权 |
 | 暂停后换会话 | 保持暂停；查看知识卡不会自动恢复 |
 | 用户只听过解释 | 记录已解释，保持应用能力证据未知 |
+| A 讲过后切到 B 或重启 | 先查全局历史，跳过基础解释，只讲应用和差异 |
+| 只有相似词或父概念讲过 | 不把候选/父概念当作当前概念已解释 |
+| 已讲过但明确要求复习 | 可以重讲，换例子或缩小问题 |
 
 由使用者在三个宿主内完成这些体验验证。本项目没有前端产物。
 
@@ -243,8 +286,8 @@ npx skills add . --list
 VibeMind 新增的工程与产品组织包括：
 
 - 随标准 Skill 分发的 Node CLI，供多个宿主使用同一状态管理入口。
-- 单一 JSON 数据源、乐观版本检查、项目锁、原子写入及版本备份。
-- 按稳定 ID 更新的知识卡与决定，按主题读取、生成 Markdown 上下文。
+- 本地 stdio MCP、用户级 SQLite、独立 revision、事务快照和在线备份、项目身份及旧 JSON 迁移。
+- 稳定 ID 的卡片、概念、别名和证据图谱，跨项目查询讲解历史，默认避免重复解释。
 - 中文教学规范、通过交流按话题观察能力、国内宿主分发说明。
 
 CLI 与测试由本项目编写，教学指令按本项目流程用中文组织。来源与两份 MIT 许可随技能包保留，见 [NOTICE.md](skills/vibemind/NOTICE.md)。

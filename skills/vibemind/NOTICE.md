@@ -2,7 +2,7 @@
 
 VibeMind 的教学指令借鉴并改编自 Noah Kim 的 [VibeWise](https://github.com/nykooi1/vibe-wise)，尤其是用户参与设计、直接解释概念、区分确认与理解证据、项目地图和未完成决定恢复。项目定位及备份保护的设计也参考了原作。以下原作版权及 MIT 许可随技能包保留。
 
-本项目自行实现了 Node CLI、JSON 版本化状态、知识卡与决定的稳定 ID 更新、按主题读取和跨宿主分发结构。CLI 源码与测试为本项目编写。VibeMind 由独立维护者维护。
+本项目自行实现了 Node CLI、旧 JSON 迁移、用户级 SQLite 与项目身份、知识卡/概念/别名/学习证据图谱、独立 revision、事务快照和在线备份，以及本地 stdio MCP 入口。CLI、集成代码和测试为本项目编写。MCP 使用官方 SDK，按其 Apache-2.0 许可证分发；VibeMind 由独立维护者维护。
 
 ## VibeMind
 

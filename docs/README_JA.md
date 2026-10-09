@@ -30,7 +30,9 @@ Qoder・WorkBuddy・TRAE で使える学習支援 Skill と軽量なローカル
 
 VibeMind は、学習を優先する Skill と、確実に学習状態を保存する CLI を組み合わせたツールです。Skill は考え方の整理、概念の説明、設計の検討と承認された実装を担当し、CLI は学習記録、プロジェクトマップ、知識カード、未完了の判断を保存します。
 
-現在利用している AI ツールとモデルをそのまま使えます。記録はプロジェクト内に保存され、追加のアカウント、モデル API、バックグラウンドサービスは必要ありません。
+現在の AI ツールとモデルをそのまま使えます。MCP と CLI は `~/.vibemind/memory.sqlite` を共有し、プロジェクトには `.vibemind/project.json` の識別情報だけを保存します。設定と説明履歴はプロジェクトをまたいで利用できます。追加のアカウントやモデル API は不要で、stdio プロセスは宿主が管理します。
+
+説明前に正確な概念 ID または明示的な別名で履歴を確認します。説明済みなら基本原理を繰り返さず、今回の応用と差分を扱います。応用の証拠がなくても自動で再説明しません。復習や再説明を明示的に求められた場合は説明できます。類似候補や親概念の履歴は対象概念の説明済み判定に使いません。
 
 ## 学び方
 
@@ -87,7 +89,7 @@ npx skills add TFboy1/VibeMind --skill vibemind --agent trae --copy
 
 #### 完全な ZIP をインポートする
 
-1. [VibeMind の Skill ZIP をダウンロード](https://github.com/TFboy1/VibeMind/releases/latest/download/vibemind-0.1.0.zip)します。
+1. 現在の 0.2.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
 2. WorkBuddy の「Skills → Skill の追加 → アップロード」から ZIP をインポートします。Qoder や TRAE の対応するインポート画面でも同じ ZIP を利用できます。
 3. 対象プロジェクトで `vibemind` を選択して呼び出します。
 
@@ -122,6 +124,16 @@ Skill のインストールだけで、すべてのプロジェクトの学習�
 
 設計の確認は、説明された設計を記録する操作です。それだけで未提示の実装まで許可されたとは扱いません。同じ範囲に対する明確な許可は再利用し、同じ確認を繰り返しません。
 
+## ローカル MCP
+
+完全なリポジトリを固定の場所に置き、一度 `npm ci` を実行します。宿主の stdio MCP 設定に実際の絶対パスを指定します。
+
+```json
+{"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
+```
+
+Windows では `D:/tools/VibeMind/scripts/mcp.mjs` などを指定します。HTTP ポートは不要です。保存先を変更する場合、すべての宿主で同じ絶対 `VIBEMIND_HOME` を使います。接続だけでは学習を開始せず、記録も作成しません。Skill ZIP の CLI は Node 標準ライブラリのみで動作し、MCP は SDK を含む完全なリポジトリから実行します。
+
 ## CLI
 
 インストールされたスクリプトの完全なパスと、対象プロジェクトを指定します。
@@ -151,7 +163,9 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 ## 保存と障害対応
 
-唯一の活動データは `.vibemind/state.json` です。表示時に Markdown を生成します。変更時には revision を増やし、旧状態をバックアップしてから原子的に置き換えます。ロックとバージョン確認により、古い会話からの上書きを防ぎます。
+活動データはユーザー側の SQLite です。ユーザーとプロジェクトの revision は独立し、更新とスナップショットを同じトランザクションで保存します。DELETE ジャーナル、FULL 同期、最大 3 秒のロック待機を使用します。init は有効な旧 state.json を、元のバイト列、バックアップ、停止状態、未完了判断を保持したまま移行します。旧 profile はプロジェクトの観察として保持し、旧カードは説明の事実を確認してから explained 証拠を補います。
+
+移動は ID で継続します。元の登録先が存在する複製 ID は拒否し、明示的な init --new-project で独立した空の記録を作ります。ディレクトリ削除後も projects と context --project-id で履歴を読めます。user/record-user は通用設定、knowledge は正確な説明状態と最大 2 ホップの関連、backup --output は上書きしない SQLite オンラインバックアップです。[記録仕様](../skills/vibemind/references/records.md)
 
 Git と worktree の境界を越えて別プロジェクトの状態を読まず、状態パスのシンボリックリンクも拒否します。長い記録の後ろにある未完了の判断もすべて復元します。
 
@@ -167,6 +181,7 @@ Git と worktree の境界を越えて別プロジェクトの状態を読まず
 
 ```sh
 node --check skills/vibemind/scripts/vibemind.mjs
+node --check scripts/mcp.mjs
 node --test
 npx skills add . --list
 ```
@@ -177,6 +192,6 @@ Node 標準のテストランナーと一時プロジェクトを使用し、更
 
 Noah Kim 氏の [VibeWise](https://github.com/nykooi1/vibe-wise) から、ユーザー主体の設計、概念説明、チェックポイント、証拠に基づく記録、プロジェクトマップと判断の復元を参考にし、教学指示を再構成しています。プロジェクト境界とバックアップの設計も原作を参考にしています。
 
-VibeMind は Node CLI、バージョン付き JSON、固定 ID の知識カード、話題ごとの読み取り、複数の宿主向けの配布を追加しています。出典と両方の MIT ライセンスは [NOTICE.md](../skills/vibemind/NOTICE.md) に含まれます。
+VibeMind は Node CLI、ローカル stdio MCP、ユーザー SQLite 図構造、プロジェクト ID、旧記録移行、トランザクションの履歴とオンラインバックアップ、プロジェクト横断の説明履歴確認を追加しています。出典と両方の MIT ライセンスは [NOTICE.md](../skills/vibemind/NOTICE.md) に含まれます。
 
 上の支援ボタンは、保守者の [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) と同じリンクを使っています。

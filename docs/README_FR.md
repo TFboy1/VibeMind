@@ -30,7 +30,9 @@ Un Skill d’apprentissage pour Qoder, WorkBuddy et TRAE, accompagné d’un CLI
 
 VibeMind associe un Skill qui donne la priorité à l’apprentissage à un CLI chargé de conserver les données de manière fiable. Le Skill accompagne le raisonnement, explique les concepts et réalise les changements clairement autorisés. Le CLI conserve les observations, la carte du projet, les fiches de connaissances et les décisions en cours.
 
-Vous utilisez votre outil et votre modèle habituels. Les données restent dans votre projet ; aucun compte supplémentaire, API de modèle ou service en arrière-plan n’est nécessaire.
+Vous utilisez votre outil et votre modèle habituels. MCP et CLI partagent `~/.vibemind/memory.sqlite` ; le projet ne conserve que son identité dans `.vibemind/project.json`. Les préférences et l’historique d’explication sont partagés entre projets. Aucun compte ni API de modèle supplémentaire : l’hôte gère le processus stdio.
+
+Avant chaque explication, consultez l’ID exact du concept ou un alias explicite. Un concept déjà expliqué ne déclenche plus l’explication des bases, même sans preuve d’application. Une demande explicite de révision ou une incompréhension permet de réexpliquer. Les candidats similaires et les concepts parents ne valent pas explication du concept courant.
 
 ## Apprendre en construisant
 
@@ -87,7 +89,7 @@ L’installation est limitée au projet par défaut. `--copy` copie des fichiers
 
 #### Importer le ZIP complet
 
-1. [Téléchargez le ZIP du Skill VibeMind](https://github.com/TFboy1/VibeMind/releases/latest/download/vibemind-0.1.0.zip).
+1. Construisez le ZIP complet depuis les sources 0.2.0, selon le [README principal](../README.md). Le ZIP 0.1.0 utilise l’ancien JSON et doit être mis à jour avant d’utiliser le nouveau MCP.
 2. Dans WorkBuddy, ouvrez Skills → Ajouter un Skill → Importer un Skill et sélectionnez le ZIP. Qoder et TRAE peuvent employer le même paquet dans leur interface d’importation.
 3. Sélectionnez `vibemind` dans le projet cible.
 
@@ -122,6 +124,16 @@ L’installation seule n’active pas l’apprentissage dans tous les projets. U
 
 Confirmer une conception enregistre le choix présenté. Cela n’autorise pas implicitement d’autres changements. Une autorisation explicite déjà donnée pour le même périmètre est réutilisée.
 
+## MCP local
+
+Conservez le dépôt complet dans un répertoire fixe et exécutez `npm ci` une fois. Configurez un serveur stdio dans l’hôte avec le chemin absolu réel :
+
+```json
+{"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
+```
+
+Sous Windows, utilisez par exemple `D:/tools/VibeMind/scripts/mcp.mjs`. L’hôte lance et ferme le processus, sans port HTTP. Pour changer le stockage, utilisez le même `VIBEMIND_HOME` absolu dans tous les hôtes. La connexion seule n’active pas l’apprentissage et ne crée pas de données. Le ZIP contient le CLI sans dépendances tierces ; le MCP s’exécute depuis le dépôt complet avec son SDK.
+
 ## CLI
 
 Utilisez le chemin complet du script installé et indiquez le projet :
@@ -151,7 +163,9 @@ Les fiches et décisions sont mises à jour par ID ; les éléments non soumis r
 
 ## Données et récupération
 
-`.vibemind/state.json` est l’unique source de données actives. Le Markdown est généré à la consultation. Chaque modification effective incrémente la révision, sauvegarde l’état précédent et remplace le fichier de manière atomique. Les verrous de projet et le contrôle de révision protègent contre les mises à jour concurrentes périmées.
+SQLite est la source active. Les révisions utilisateur/projet sont indépendantes ; modifications et instantanés sont enregistrés dans une transaction. Journal DELETE, synchronisation FULL et délai de verrou de 3 secondes. init importe le state.json valide en conservant les octets, sauvegardes, pause et décisions. L’ancien profile reste une observation du projet ; les anciennes fiches sont vérifiées avant d’ajouter une preuve explained.
+
+Un déplacement conserve l’ID. Un ID copié dont le répertoire d’origine existe est refusé ; init --new-project crée explicitement des données de projet séparées et vides. projects/context --project-id lisent aussi l’historique après suppression du dossier. user/record-user gèrent le profil commun ; knowledge recherche l’état exact et jusqu’à deux sauts de relations ; backup --output utilise la sauvegarde SQLite en ligne sans écrasement. [Contrat détaillé](../skills/vibemind/references/records.md)
 
 La recherche respecte les limites Git et worktree et refuse les chemins d’état symboliques. Toutes les décisions non terminées sont restaurées, même après un long historique.
 
@@ -167,6 +181,7 @@ Il n’existe pas de commande de réinitialisation automatique ou de restauratio
 
 ```sh
 node --check skills/vibemind/scripts/vibemind.mjs
+node --check scripts/mcp.mjs
 node --test
 npx skills add . --list
 ```
@@ -177,6 +192,6 @@ Les tests utilisent le moteur intégré de Node et des projets temporaires. Ils 
 
 VibeMind s’inspire de [VibeWise](https://github.com/nykooi1/vibe-wise), par Noah Kim, et adapte ses principes : conception dirigée par l’apprenant, explication directe, étapes de décision, preuves d’apprentissage, carte du projet et restauration des décisions. Les limites de projet et les sauvegardes s’appuient également sur cette référence.
 
-VibeMind ajoute son CLI Node, les données JSON versionnées, les fiches à ID stable, la lecture par sujet et la distribution pour plusieurs outils. Les attributions et les deux licences MIT figurent dans [NOTICE.md](../skills/vibemind/NOTICE.md).
+VibeMind ajoute son CLI Node, MCP stdio local, graphe SQLite utilisateur, identités de projet, migration JSON, instantanés transactionnels, sauvegardes en ligne et vérification des explications entre projets. Les attributions et les deux licences MIT figurent dans [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 Les boutons de soutien utilisent les mêmes destinations que le projet [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) du mainteneur.

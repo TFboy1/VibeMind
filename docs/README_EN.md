@@ -30,7 +30,9 @@ A learning companion for Qoder, WorkBuddy and TRAE, with a lightweight local CLI
 
 VibeMind combines a learning-first Skill with reliable local state management. The Skill guides reasoning, explains unfamiliar concepts and implements clearly authorized designs. The CLI stores learning observations, a project map, knowledge cards and unfinished decisions.
 
-Use the model and development tools you already have. Learning records stay in your project; no extra account, model API or background service is required.
+Use your existing model and tools. MCP and CLI share `~/.vibemind/memory.sqlite`; each project only keeps `.vibemind/project.json` for identity. Preferences and explanation history work across projects. No extra account or model API is required; the host manages the stdio process.
+
+Before explaining a concept, query its exact ID or an explicit alias. An already explained concept skips the basics by default, even without application evidence. Explicit review requests or continued confusion allow another explanation. Related concepts and fuzzy candidates do not imply that the current concept was explained.
 
 ## How learning works
 
@@ -90,7 +92,7 @@ Installation is project-scoped by default. `--copy` uses regular files, which is
 
 #### Import the complete ZIP
 
-1. [Download the VibeMind skill ZIP](https://github.com/TFboy1/VibeMind/releases/latest/download/vibemind-0.1.0.zip).
+1. Build the complete 0.2.0 Skill ZIP from current source; see the [main README](../README.md). The old 0.1.0 ZIP writes project JSON and must be upgraded before using the new MCP.
 2. In WorkBuddy, open Skills → Add skill → Upload skill and import it. Qoder and TRAE can use the same ZIP through their native import UI.
 3. Find `vibemind` and invoke it in your target project.
 
@@ -125,6 +127,16 @@ Installing a Skill does not enable learning in every project. After activation, 
 
 A design confirmation records that design. It does not grant implementation permission for unmentioned work. Existing explicit authorization for the same scope is reused.
 
+## Local MCP
+
+Keep the full repository in a stable directory and run `npm ci` once. Add a stdio server to your host, replacing the absolute script path:
+
+```json
+{"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
+```
+
+On Windows, use a path such as `D:/tools/VibeMind/scripts/mcp.mjs`. The host starts and stops the process; no HTTP port is needed. Use the same absolute `VIBEMIND_HOME` in all hosts to override the default user directory. Connecting does not enable learning or create records. The Skill ZIP includes the standard-library CLI; the MCP server runs from the full repository with its SDK dependencies.
+
 ## CLI
 
 Use the complete path to the installed script and explicitly select your project:
@@ -154,7 +166,9 @@ Cards and decisions are upserted by ID. Other records are preserved. Profile and
 
 ## Storage and recovery
 
-`.vibemind/state.json` is the single source of truth; Markdown is generated when viewed. Each actual update increments the revision, backs up the previous state and atomically replaces the active file. Project locks and revision checks protect against stale concurrent writes.
+SQLite is the active source of truth. User and project revisions are independent; updates and snapshots commit in one transaction, using DELETE journaling, FULL synchronization and a three-second busy timeout. `init` imports valid legacy state.json without changing its bytes, backups, paused mode or pending decisions. Legacy profiles remain project observations; legacy cards need review before creating explained evidence.
+
+Moved projects reconnect by ID. A copied ID whose original registered directory still exists is rejected; explicit `init --new-project` starts separate empty project records. Global learning history remains shared. Use `projects` and `context --project-id` to read history after directory deletion. `user`/`record-user` manage the independent user profile; `knowledge --concept-id` returns exact explanation status and up to two hops of related evidence. `backup --output` uses the SQLite online backup API and never overwrites a destination. See the [record contract](../skills/vibemind/references/records.md) for concepts, aliases, links and explained/applied evidence.
 
 Lookup respects Git and worktree boundaries and rejects symbolic-link state paths. All unfinished decisions are restored, including those after long histories.
 
@@ -170,6 +184,7 @@ There is no automatic reset or backup-restore command. Records enter your existi
 
 ```sh
 node --check skills/vibemind/scripts/vibemind.mjs
+node --check scripts/mcp.mjs
 node --test
 npx skills add . --list
 ```
@@ -180,6 +195,6 @@ Tests use Node's built-in runner and temporary projects. They cover stable updat
 
 VibeMind borrows and adapts [VibeWise](https://github.com/nykooi1/vibe-wise) by Noah Kim: learner-owned design, direct concept teaching, checkpoint semantics, evidence-based learning records, project maps and unfinished-decision restoration. The project-boundary and backup design also draw on its implementation.
 
-This project adds its Node CLI, versioned JSON storage, stable-ID knowledge cards, topic-specific reading and multi-host distribution. Source attribution and both MIT notices are included in [NOTICE.md](../skills/vibemind/NOTICE.md).
+This project adds its Node CLI, local stdio MCP, user-level SQLite graph, stable project identity, legacy migration, transaction snapshots, online backups and explanation checks across projects. Source attribution and both MIT notices are included in [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 The support buttons above use the same destinations as the maintainer's [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) project.

@@ -2,478 +2,328 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { execute, locate, renderContext } from '../skills/vibemind/scripts/vibemind.mjs';
 
 const script = fileURLToPath(new URL('../skills/vibemind/scripts/vibemind.mjs', import.meta.url));
+const empty = { schemaVersion: 1, revision: 0, mode: 'active', profile: '', projectMap: '', cards: [], decisions: [] };
+const card = { id: 'cors-card', title: '当前跨域配置', content: 'Vue 请求 FastAPI；CORS 原理已经解释。' };
+const decision = { id: 'access', title: '访问规则', stage: 'implementation', content: '等待实施授权，不能当作已经授权。' };
+const explanation = {
+  cards: [card], concepts: [{ id: 'cors', title: '跨域资源共享', aliases: ['CORS', '跨域'] }],
+  evidence: [{ id: 'cors-explained', conceptId: 'cors', cardId: card.id, kind: 'explained', scope: '同源策略与 CORS 的基本原理', summary: '已结合 Vue/FastAPI 解释来源限制；无用户独立应用证据。', codeLocation: 'api/main.py:12' }],
+};
 
-function workspace(t) {
+function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibemind-test-'));
   t.after(() => {
     assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
     assert.ok(path.basename(root).startsWith('vibemind-test-'));
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return root;
+  const home = path.join(root, '用户 记忆');
+  const makeProject = name => {
+    const cwd = path.join(root, name);
+    fs.mkdirSync(path.join(cwd, '.git'), { recursive: true });
+    return cwd;
+  };
+  const a = makeProject('中文 项目 A'), b = makeProject('项目 B');
+  const call = (command, input, options = {}) => execute(command, { home, ...(['init', 'status', 'context', 'record', 'pause', 'resume'].includes(command) && !options.projectId ? { cwd: a } : {}), ...options }, input);
+  const rows = sql => {
+    const db = new DatabaseSync(path.join(home, 'memory.sqlite'), { readOnly: true });
+    try { return db.prepare(sql).all().map(value => ({ ...value })); } finally { db.close(); }
+  };
+  return { root, home, a, b, makeProject, call, rows };
 }
-
-function project(t) {
-  const root = path.join(workspace(t), '中文 项目');
-  fs.mkdirSync(root);
-  fs.mkdirSync(path.join(root, '.git'));
-  return root;
-}
-
-function run(cwd, command, input, flags = [], executable = script) {
-  const result = spawnSync(process.execPath, [executable, command, '--cwd', cwd, ...flags], {
-    encoding: 'utf8',
-    input: input === undefined || Buffer.isBuffer(input) ? input : JSON.stringify(input),
-    timeout: 10_000,
-    maxBuffer: 5 * 1024 * 1024,
+function run(f, command, input, flags = [], executable = script) {
+  const value = spawnSync(process.execPath, [executable, command, ...flags], {
+    cwd: f.a, env: { ...process.env, VIBEMIND_HOME: f.home }, encoding: 'utf8',
+    input: input === undefined || Buffer.isBuffer(input) ? input : JSON.stringify(input), timeout: 15_000,
   });
-  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(value.error, undefined, value.error?.message);
+  return value;
+}
+function ok(value) {
+  assert.equal(value.status, 0, value.stderr);
+  const result = JSON.parse(value.stdout);
+  assert.equal(result.ok, true);
   return result;
 }
-
-function ok(result) {
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
-  const value = JSON.parse(result.stdout);
-  assert.equal(value.ok, true);
-  return value;
+function rejected(value, code) {
+  assert.equal(value.status, 1, value.stdout);
+  assert.equal(value.stdout, '');
+  const result = JSON.parse(value.stderr.split('\n').find(line => line.startsWith('{"ok":false')));
+  assert.equal(result.error.code, code, result.error.message);
 }
-
-function rejected(result, code) {
-  assert.equal(result.status, 1, result.stdout);
-  assert.equal(result.stdout, '');
-  const value = JSON.parse(result.stderr);
-  assert.equal(value.error.code, code, value.error.message);
-  return value;
-}
-
-function stateFile(root) {
-  return path.join(root, '.vibemind', 'state.json');
-}
-
-function state(root) {
-  return JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
-}
-
+const rejects = (action, code) => assert.throws(action, error => error.code === code);
 function disk(root) {
   const result = {};
   function walk(directory) {
     for (const name of fs.readdirSync(directory)) {
-      const file = path.join(directory, name);
-      const stat = fs.lstatSync(file);
-      const relative = path.relative(root, file);
-      if (stat.isDirectory()) {
-        result[relative] = 'directory';
-        walk(file);
-      } else result[relative] = stat.isSymbolicLink() ? fs.readlinkSync(file) : fs.readFileSync(file).toString('hex');
+      const file = path.join(directory, name), stat = fs.lstatSync(file);
+      if (stat.isDirectory()) walk(file);
+      else result[path.relative(root, file)] = stat.isSymbolicLink() ? fs.readlinkSync(file) : fs.readFileSync(file).toString('hex');
     }
   }
   walk(root);
   return result;
 }
 
-const card = (content = 'Vue 请求 FastAPI：当前允许的来源需要与真实页面地址一致。') => ({
-  id: 'cors-vue-fastapi', title: '理解跨域与当前项目的来源配置', content,
+test('首次读取不创建身份、数据库或启用伴学', t => {
+  const f = fixture(t), before = disk(f.root);
+  assert.equal(f.call('status').initialized, false);
+  rejects(() => f.call('context'), 'NOT_INITIALIZED');
+  assert.deepEqual(f.call('projects').projects, []);
+  assert.equal(f.call('user').userRevision, 0);
+  assert.equal(f.call('knowledge', undefined, { topic: 'CORS' }).alreadyExplained, false);
+  assert.deepEqual(disk(f.root), before);
 });
-const decision = (id = 'note-ownership', stage = 'reasoning') => ({
-  id, title: '笔记属于谁', stage, content: '等待用户解释访问规则；尚未授权实施。',
+test('仅身份写入项目目录；init 和相同更新幂等，暂停不会被 init 撤销', t => {
+  const f = fixture(t);
+  assert.equal(f.call('init').revision, 0);
+  assert.deepEqual(fs.readdirSync(path.join(f.a, '.vibemind')), ['project.json']);
+  f.call('pause');
+  const before = disk(f.root);
+  assert.equal(f.call('init').mode, 'paused');
+  assert.equal(f.call('pause').changed, false);
+  assert.deepEqual(disk(f.root), before);
 });
-
-test('首次 status/context 只读，未初始化时不创建学习目录', t => {
-  const root = project(t);
-  const before = disk(root);
-  const value = ok(run(root, 'status'));
-  assert.equal(value.initialized, false);
-  assert.equal(value.locked, false);
-  rejected(run(root, 'context'), 'NOT_INITIALIZED');
-  assert.deepEqual(disk(root), before);
+test('用户档案共享，项目观察、卡片和决定隔离，revision 独立', t => {
+  const f = fixture(t);
+  f.call('init'); f.call('init', undefined, { cwd: f.b });
+  f.call('record-user', { expectedRevision: 0, profile: '中文；结合实际代码。' });
+  f.call('record', { expectedRevision: 0, profile: 'A 的观察', projectMap: 'Vue → FastAPI', cards: [card], decisions: [decision] });
+  const a = f.call('context'), b = f.call('context', undefined, { cwd: f.b });
+  assert.equal(a.userProfile, b.userProfile); assert.equal(a.userRevision, 1);
+  assert.equal(b.revision, 0); assert.equal(b.profile, '');
+  assert.equal(b.pendingDecisions.length, 0); assert.equal(b.cardIndex.length, 0);
+  rejects(() => f.call('record-user', { expectedRevision: 0, profile: '旧档案' }), 'CONFLICT');
 });
-
-test('init 幂等，已有暂停状态不会因 init 重新启用', t => {
-  const root = project(t);
-  const initial = ok(run(root, 'init'));
-  assert.equal(initial.created, true);
-  assert.equal(initial.revision, 0);
-  ok(run(root, 'pause'));
-  const before = disk(root);
-  const repeated = ok(run(root, 'init'));
-  assert.equal(repeated.created, false);
-  assert.equal(repeated.mode, 'paused');
-  assert.equal(repeated.revision, 1);
-  assert.deepEqual(disk(root), before);
+test('A 解释后 B 按别名跳过基础解释，无应用证据仍不重讲', t => {
+  const f = fixture(t), a = f.call('init');
+  f.call('record', { expectedRevision: 0, ...explanation });
+  f.call('init', undefined, { cwd: f.b });
+  const b = f.call('context', undefined, { cwd: f.b, topic: 'CORS' });
+  assert.equal(b.learning.alreadyExplained, true); assert.equal(b.learning.guidance, 'skip_basics');
+  assert.equal(b.learning.conceptId, 'cors');
+  assert.equal(b.learning.explanationSummaries[0].projectId, a.projectId);
+  assert.equal(b.learning.explanationSummaries[0].codeLocation, 'api/main.py:12');
+  assert.ok(!b.learning.evidence.some(value => value.kind === 'applied'));
+  assert.match(renderContext(b), /缺少应用证据不是自动重讲/);
+  assert.match(renderContext(b), /用户主动要求复习/);
+  assert.equal(ok(run(f, 'knowledge', undefined, ['--topic', '跨域'])).alreadyExplained, true);
 });
-
-test('中文和空格路径、BOM 输入及真实 stdin JSON 更新均可用', t => {
-  const root = project(t);
-  ok(run(root, 'init'));
-  const input = Buffer.from(`\uFEFF${JSON.stringify({ expectedRevision: 0, profile: '用户能解释 Vue 响应式，FastAPI 熟悉程度未知。', cards: [card()] })}`, 'utf8');
-  const saved = ok(run(root, 'record', input));
-  assert.equal(saved.revision, 1);
-  assert.equal(state(root).cards[0].content, card().content);
-  assert.match(state(root).profile, /熟悉程度未知/);
-});
-
-test('按稳定 ID 更新卡片和决定，保留其他记录；相同更新不增加版本', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  execute('record', { cwd: root }, { expectedRevision: 0, cards: [card(), { id: 'vue-ref', title: 'ref', content: '已解释；未观察到独立应用。' }], decisions: [decision()] });
-  execute('record', { cwd: root }, { expectedRevision: 1, cards: [card('用户能独立判断允许来源；依据：在当前调试中修正配置并解释原因。')], decisions: [decision('note-ownership', 'implementation')] });
-  assert.equal(state(root).cards.length, 2);
-  assert.equal(state(root).decisions.length, 1);
-  assert.equal(state(root).decisions[0].stage, 'implementation');
-  const before = disk(root);
-  const value = execute('record', { cwd: root }, { expectedRevision: 2, cards: [card(state(root).cards[0].content)] });
-  assert.equal(value.changed, false);
-  assert.deepEqual(disk(root), before);
-});
-
-test('context 按主题读取卡片，始终恢复全部未完成决定，读取不写入', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  execute('record', { cwd: root }, {
-    expectedRevision: 0, profile: '当前按话题观察，不给整体能力评级。', projectMap: 'Vue 表单 → FastAPI 接口 → 存储（未定）',
-    cards: [card(), { id: 'database', title: '数据库', content: 'DATABASE_BODY_' + '旧主题记录'.repeat(20_000) }],
-    decisions: [decision('ownership', 'reasoning'), decision('model', 'design'), decision('access', 'implementation'), decision('done', 'completed')],
+test('候选与子概念不误跳过；应用与解释证据互不覆盖', t => {
+  const f = fixture(t); f.call('init');
+  f.call('record', { expectedRevision: 0, ...explanation,
+    concepts: [...explanation.concepts, { id: 'cors-preflight', title: 'CORS 预检' }], links: [{ conceptId: 'cors-preflight', cardId: card.id }],
   });
-  const before = disk(root);
-  const base = ok(run(root, 'context', undefined, ['--json']));
-  assert.equal(base.pendingDecisions.length, 3);
-  assert.equal(base.cardIndex.length, 2);
-  assert.equal(Object.hasOwn(base, 'cards'), false);
-  const selected = ok(run(root, 'context', undefined, ['--topic', 'vue', '--json']));
-  assert.deepEqual(selected.cards.map(value => value.id), ['cors-vue-fastapi']);
-  const unmatched = ok(run(root, 'context', undefined, ['--topic', '未知主题', '--json']));
-  assert.deepEqual(unmatched.cards, []);
-  const output = run(root, 'context');
-  assert.equal(output.status, 0, output.stderr);
-  assert.match(output.stdout, /存储（未定）/);
-  assert.ok(!output.stdout.includes('DATABASE_BODY_'));
-  assert.match(renderContext(selected), /尚未授权实施/);
-  ok(run(root, 'status'));
-  assert.deepEqual(disk(root), before);
+  const fuzzy = f.call('knowledge', undefined, { topic: '资源' });
+  assert.equal(fuzzy.alreadyExplained, false); assert.equal(fuzzy.guidance, 'resolve_concept');
+  assert.equal(fuzzy.candidates[0].id, 'cors');
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors-preflight' }).alreadyExplained, false);
+  rejects(() => f.call('record', { expectedRevision: 1, evidence: [{ ...explanation.evidence[0], kind: 'applied' }] }), 'INVALID_INPUT');
+  f.call('record', { expectedRevision: 1, evidence: [{ ...explanation.evidence[0], id: 'cors-applied', kind: 'applied', summary: '用户独立修正来源并说明原因。' }] });
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).evidence.length, 2);
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
 });
-
-test('长档案之后的决定仍完整恢复，设计确认不被升级为实施授权', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  execute('record', { cwd: root }, { expectedRevision: 0, profile: '观察记录'.repeat(20_000), decisions: [decision('late-pending', 'implementation')] });
-  const value = execute('context', { cwd: root });
-  assert.deepEqual(value.pendingDecisions, [decision('late-pending', 'implementation')]);
-  assert.equal(state(root).decisions[0].stage, 'implementation');
-});
-
-test('pause 拒绝 record，resume 保留卡片和待授权决定，重复暂停恢复幂等', t => {
-  const root = project(t);
-  ok(run(root, 'init'));
-  ok(run(root, 'record', { expectedRevision: 0, cards: [card()], decisions: [decision('access', 'implementation')] }));
-  const paused = ok(run(root, 'pause'));
-  assert.equal(paused.revision, 2);
-  const before = disk(root);
-  rejected(run(root, 'record', { expectedRevision: 2, profile: '不应保存' }), 'PAUSED');
-  const read = ok(run(root, 'context', undefined, ['--json']));
-  assert.equal(read.mode, 'paused');
-  assert.equal(ok(run(root, 'pause')).changed, false);
-  assert.deepEqual(disk(root), before);
-  const resumed = ok(run(root, 'resume'));
-  assert.equal(resumed.revision, 3);
-  assert.equal(resumed.pendingDecisions[0].stage, 'implementation');
-  assert.deepEqual(state(root).cards, [card()]);
-  const after = disk(root);
-  assert.equal(ok(run(root, 'resume')).changed, false);
-  assert.deepEqual(disk(root), after);
-});
-
-test('旧版本提交拒绝，不能覆盖其他会话的记录或生成新备份', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] });
-  const before = disk(root);
-  rejected(run(root, 'record', { expectedRevision: 0, profile: '旧会话内容' }), 'CONFLICT');
-  assert.deepEqual(disk(root), before);
-});
-
-test('拒绝非法输入、重复 ID、非法阶段和通过 record 修改启用状态', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const before = disk(root);
-  const invalid = [
-    { profile: '缺少版本号' },
-    { expectedRevision: -1, profile: '非法版本' },
-    { expectedRevision: 0 },
-    { expectedRevision: 0, mode: 'active' },
-    { expectedRevision: 0, profile: 123 },
-    { expectedRevision: 0, cards: [card(), card()] },
-    { expectedRevision: 0, cards: [{ id: 'blank', title: '', content: '内容' }] },
-    { expectedRevision: 0, decisions: [decision('test', 'approved-by-ai')] },
-  ];
-  for (const input of invalid) rejected(run(root, 'record', input), 'INVALID_INPUT');
-  rejected(run(root, 'record', Buffer.from('{bad json}', 'utf8')), 'INVALID_INPUT');
-  rejected(run(root, 'record', Buffer.from([0xff])), 'INVALID_INPUT');
-  assert.deepEqual(disk(root), before);
-});
-
-test('非法参数不会意外初始化；--topic 只能用于 context', t => {
-  const root = project(t);
-  const before = disk(root);
-  rejected(run(root, 'init', undefined, ['--topic', '主题']), 'USAGE');
-  rejected(run(root, 'init', undefined, ['--unexpected']), 'USAGE');
-  rejected(run(root, 'invalid'), 'USAGE');
-  rejected(run(root, 'init', undefined, ['--cwd', root]), 'USAGE');
-  assert.deepEqual(disk(root), before);
-});
-
-test('损坏 JSON、不支持的版本及重复 ID 状态不会被任何命令重置', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const initial = state(root);
-  const cases = [
-    ['{broken', 'INVALID_STATE'],
-    [JSON.stringify({ ...initial, schemaVersion: 2 }), 'UNSUPPORTED_SCHEMA'],
-    [JSON.stringify({ ...initial, cards: [card(), card()] }), 'INVALID_STATE'],
-    [JSON.stringify({ ...initial, mode: 'invalid' }), 'INVALID_STATE'],
-  ];
-  for (const [content, code] of cases) {
-    fs.writeFileSync(stateFile(root), content, 'utf8');
-    const before = disk(root);
-    for (const command of ['init', 'status', 'context', 'pause', 'resume', 'record']) {
-      rejected(run(root, command, command === 'record' ? { expectedRevision: 0, profile: '不应覆盖' } : undefined), code);
-    }
-    assert.deepEqual(disk(root), before);
-  }
-});
-
-test('无效 UTF-8 状态报错，UTF-8 BOM 状态可读取', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const initial = fs.readFileSync(stateFile(root), 'utf8');
-  fs.writeFileSync(stateFile(root), Buffer.from([0xff]));
-  rejected(run(root, 'status'), 'INVALID_STATE');
-  assert.deepEqual(fs.readFileSync(stateFile(root)), Buffer.from([0xff]));
-  fs.writeFileSync(stateFile(root), `\uFEFF${initial}`, 'utf8');
-  assert.equal(ok(run(root, 'status')).revision, 0);
-});
-
-test('每次更新备份上一版原始内容，已有备份不会覆盖', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const original = fs.readFileSync(stateFile(root));
-  const first = execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] });
-  assert.deepEqual(fs.readFileSync(first.backupFile), original);
-  const version1 = fs.readFileSync(stateFile(root));
-  const second = execute('pause', { cwd: root });
-  assert.deepEqual(fs.readFileSync(second.backupFile), version1);
-  assert.deepEqual(fs.readFileSync(first.backupFile), original);
-  assert.equal(fs.readdirSync(path.join(root, '.vibemind', 'backups')).length, 2);
-});
-
-test('备份写入失败保留原状态，释放锁并清理本次不完整备份', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const original = fs.readFileSync(stateFile(root));
-  const write = fs.writeFileSync;
-  fs.writeFileSync = (target, ...args) => {
-    if (typeof target === 'number') {
-      const descriptor = fs.fstatSync(target);
-      const backups = path.join(root, '.vibemind', 'backups');
-      if (fs.existsSync(backups) && fs.readdirSync(backups).some(name => fs.statSync(path.join(backups, name)).ino === descriptor.ino)) {
-        throw Object.assign(new Error('模拟备份磁盘写入失败'), { code: 'ENOSPC' });
-      }
-    }
-    return write(target, ...args);
-  };
-  try {
-    assert.throws(() => execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] }), { code: 'BACKUP_FAILED' });
-  } finally {
-    fs.writeFileSync = write;
-  }
-  assert.deepEqual(fs.readFileSync(stateFile(root)), original);
-  assert.ok(!fs.existsSync(path.join(root, '.vibemind', '.lock')));
-  assert.deepEqual(fs.readdirSync(path.join(root, '.vibemind', 'backups')), []);
-  assert.equal(execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] }).revision, 1);
-});
-
-test('原子替换失败保留原状态和完整备份，重试复用已有备份', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const original = fs.readFileSync(stateFile(root));
-  const rename = fs.renameSync;
-  fs.renameSync = () => { throw Object.assign(new Error('模拟原子替换失败'), { code: 'EACCES' }); };
-  try {
-    assert.throws(() => execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] }), { code: 'WRITE_FAILED' });
-  } finally {
-    fs.renameSync = rename;
-  }
-  assert.deepEqual(fs.readFileSync(stateFile(root)), original);
-  assert.ok(!fs.existsSync(path.join(root, '.vibemind', '.lock')));
-  assert.ok(!fs.readdirSync(path.join(root, '.vibemind')).some(name => name.endsWith('.tmp')));
-  const backups = path.join(root, '.vibemind', 'backups');
-  assert.equal(fs.readdirSync(backups).length, 1);
-  assert.deepEqual(fs.readFileSync(path.join(backups, fs.readdirSync(backups)[0])), original);
-  assert.equal(execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] }).revision, 1);
-  assert.equal(fs.readdirSync(backups).length, 1);
-});
-
-test('存在写入锁时立即报错，不删除活跃或残留锁', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const lockFile = path.join(root, '.vibemind', '.lock');
-  const fd = fs.openSync(lockFile, 'wx');
-  try {
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token: 'test-owner' }), 'utf8');
-    const before = disk(root);
-    rejected(run(root, 'record', { expectedRevision: 0, cards: [card()] }), 'LOCKED');
-    assert.equal(ok(run(root, 'status')).locked, true);
-    assert.deepEqual(disk(root), before);
-  } finally {
-    fs.closeSync(fd);
-  }
-});
-
-test('锁释放失败报告需核实状态，已提交的数据仍可只读查看', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const unlink = fs.unlinkSync;
-  fs.unlinkSync = file => {
-    if (path.basename(file) === '.lock') throw Object.assign(new Error('模拟锁释放失败'), { code: 'EACCES' });
-    return unlink(file);
-  };
-  try {
-    assert.throws(() => execute('record', { cwd: root }, { expectedRevision: 0, cards: [card()] }), { code: 'LOCK_RELEASE_FAILED' });
-  } finally {
-    fs.unlinkSync = unlink;
-  }
-  const value = ok(run(root, 'status'));
-  assert.equal(value.revision, 1);
-  assert.equal(value.locked, true);
-  assert.deepEqual(state(root).cards, [card()]);
-});
-
-function writer(cwd, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, 'record', '--cwd', cwd]);
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', value => { stdout += value; });
-    child.stderr.setEncoding('utf8').on('data', value => { stderr += value; });
-    child.once('error', reject);
-    child.once('close', status => resolve({ status, stdout, stderr }));
-    child.stdin.end(JSON.stringify(input), 'utf8');
+test('两跳查询有边界，循环、上限及截断可处理', t => {
+  const f = fixture(t); f.call('init');
+  f.call('record', { expectedRevision: 0,
+    cards: [{ id: 'ab', title: 'AB', content: 'A 与 B' }, { id: 'bc', title: 'BC', content: 'B 与 C' }],
+    concepts: ['a', 'b', 'c'].map(id => ({ id, title: id.toUpperCase() })),
+    links: [{ cardId: 'ab', conceptId: 'a' }, { cardId: 'ab', conceptId: 'b' }, { cardId: 'bc', conceptId: 'b' }, { cardId: 'bc', conceptId: 'c' }],
   });
-}
-
-test('两个真实 CLI 进程并发提交时仅一个成功，重读后可合并更新', { timeout: 15_000 }, async t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const cards = [card(), { id: 'validation', title: '请求校验', content: 'FastAPI 根据输入模型校验请求。' }];
-  const results = await Promise.all(cards.map(value => writer(root, { expectedRevision: 0, cards: [value] })));
-  assert.equal(results.filter(value => value.status === 0).length, 1);
-  const loser = results.findIndex(value => value.status !== 0);
-  assert.ok(['LOCKED', 'CONFLICT'].includes(JSON.parse(results[loser].stderr).error.code));
-  assert.equal(state(root).revision, 1);
-  assert.equal(state(root).cards.length, 1);
-  execute('record', { cwd: root }, { expectedRevision: 1, cards: [cards[loser]] });
-  assert.equal(state(root).cards.length, 2);
-  assert.equal(state(root).revision, 2);
+  assert.deepEqual(f.call('knowledge', undefined, { conceptId: 'a', depth: 1 }).concepts.map(value => value.id), ['a', 'b']);
+  assert.deepEqual(f.call('knowledge', undefined, { conceptId: 'a', depth: 2 }).concepts.map(value => value.id), ['a', 'b', 'c']);
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'a', limit: 1 }).truncated, true);
+  for (const options of [{ depth: 3 }, { limit: 0 }, { limit: 101 }, { depth: 1.5 }]) rejects(() => f.call('knowledge', undefined, { topic: 'A', ...options }), 'USAGE');
 });
-
-test('源码子目录找到项目状态；嵌套仓库和 worktree 的 .git 文件阻止串读', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const source = path.join(root, 'src', 'api');
-  fs.mkdirSync(source, { recursive: true });
-  assert.equal(locate(source).project, root);
-  const nested = path.join(source, 'nested');
-  fs.mkdirSync(nested);
-  fs.mkdirSync(path.join(nested, '.git'));
-  assert.equal(ok(run(nested, 'status')).initialized, false);
-  assert.equal(ok(run(nested, 'init')).project, nested);
-  const worktree = path.join(root, 'another-worktree');
-  fs.mkdirSync(worktree);
-  fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: /unused/vibemind-test-fixture\n', 'utf8');
-  assert.equal(ok(run(worktree, 'status')).initialized, false);
-  assert.equal(ok(run(worktree, 'init')).project, worktree);
-  assert.equal(state(root).revision, 0);
+test('UTF-8/BOM 输入、稳定 ID 合并、全部决定恢复、读取不写入', t => {
+  const f = fixture(t); ok(run(f, 'init'));
+  ok(run(f, 'record', Buffer.from('\uFEFF' + JSON.stringify({ expectedRevision: 0, profile: '观察'.repeat(20_000), cards: [card], decisions: [decision, { ...decision, id: 'done', stage: 'completed' }] }), 'utf8')));
+  f.call('record', { expectedRevision: 1, cards: [{ ...card, content: '更新已有卡' }, { id: 'other', title: '其他', content: 'OTHER_BODY_' + '内容'.repeat(20_000) }] });
+  const before = disk(f.root);
+  assert.equal(f.call('record', { expectedRevision: 2, cards: [{ ...card, content: '更新已有卡' }] }).changed, false);
+  const value = f.call('context');
+  assert.equal(value.pendingDecisions.length, 1); assert.equal(value.pendingDecisions[0].stage, 'implementation');
+  assert.equal(value.cardIndex.length, 2); assert.ok(!renderContext(value).includes('OTHER_BODY_'));
+  f.call('context', undefined, { topic: '未知主题' }); f.call('status');
+  assert.deepEqual(disk(f.root), before);
 });
-
-test('没有 Git 时初始化当前目录；存在更近的半初始化目录时不借用父记录', t => {
-  const root = workspace(t);
-  const standalone = path.join(root, 'standalone');
-  fs.mkdirSync(standalone);
-  assert.equal(execute('init', { cwd: standalone }).project, standalone);
-  const child = path.join(standalone, 'child');
-  fs.mkdirSync(path.join(child, '.vibemind'), { recursive: true });
-  assert.equal(ok(run(child, 'status')).initialized, false);
-  assert.equal(ok(run(child, 'init')).project, child);
-  assert.equal(state(standalone).revision, 0);
+test('暂停拒绝学习写入，恢复保留解释与待授权决定', t => {
+  const f = fixture(t); f.call('init');
+  f.call('record', { expectedRevision: 0, ...explanation, decisions: [decision] }); f.call('pause');
+  const before = disk(f.root);
+  rejects(() => f.call('record', { expectedRevision: 2, profile: '不能保存' }), 'PAUSED');
+  assert.equal(f.call('context', undefined, { topic: 'CORS' }).mode, 'paused');
+  assert.deepEqual(disk(f.root), before);
+  assert.equal(f.call('resume').pendingDecisions[0].stage, 'implementation');
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
 });
-
-test('更近的损坏目录不会回退至父项目记录', t => {
-  const root = project(t);
-  execute('init', { cwd: root });
-  const child = path.join(root, 'child');
-  fs.mkdirSync(child);
-  fs.writeFileSync(path.join(child, '.vibemind'), '不是目录', 'utf8');
-  rejected(run(child, 'status'), 'UNSAFE_PATH');
-  assert.equal(state(root).revision, 0);
+test('失败事务回滚概念、证据、项目及快照，非法输入无变更', t => {
+  const f = fixture(t); f.call('init'); f.call('record', { expectedRevision: 0, ...explanation });
+  const before = disk(f.root);
+  rejects(() => f.call('record', { expectedRevision: 1, profile: '不能保留', concepts: [{ id: 'new', title: '新概念', aliases: ['CORS'] }] }), 'CONCEPT_CONFLICT');
+  rejects(() => f.call('record', { expectedRevision: 1, concepts: [{ id: 'orphan', title: '孤儿' }], evidence: [{ ...explanation.evidence[0], id: 'invalid', conceptId: 'orphan', cardId: 'missing' }] }), 'INVALID_INPUT');
+  const invalid = [{ expectedRevision: 0, profile: '旧版本' }, { expectedRevision: 1 }, { expectedRevision: 1, mode: 'active' }, { expectedRevision: 1, cards: [card, card] }, { expectedRevision: 1, decisions: [{ ...decision, stage: 'approved' }] }];
+  for (const input of invalid) rejects(() => f.call('record', input), input.expectedRevision === 0 ? 'CONFLICT' : 'INVALID_INPUT');
+  assert.deepEqual(disk(f.root), before); assert.equal(f.rows('SELECT * FROM concepts').length, 1);
+  assert.equal(JSON.parse(f.rows('SELECT content FROM snapshots')[0].content).state.revision, 0);
 });
-
-test('符号链接学习目录和备份目录被拒绝，外部数据保持不变', t => {
-  const root = project(t);
-  const outside = path.join(path.dirname(root), 'outside');
-  fs.mkdirSync(outside);
-  fs.writeFileSync(path.join(outside, 'sentinel.txt'), '不得修改', 'utf8');
-  const otherProject = path.join(root, 'linked-project');
-  fs.mkdirSync(otherProject);
-  fs.mkdirSync(path.join(otherProject, '.git'));
-  fs.symlinkSync(outside, path.join(otherProject, '.vibemind'), 'junction');
-  rejected(run(otherProject, 'init'), 'UNSAFE_PATH');
-  execute('init', { cwd: root });
-  fs.symlinkSync(outside, path.join(root, '.vibemind', 'backups'), 'junction');
-  const before = fs.readFileSync(stateFile(root));
-  rejected(run(root, 'record', { expectedRevision: 0, cards: [card()] }), 'UNSAFE_PATH');
-  assert.deepEqual(fs.readFileSync(stateFile(root)), before);
-  assert.deepEqual(fs.readdirSync(outside), ['sentinel.txt']);
+test('迁移保留旧 JSON/BOM/备份、暂停与决定；不自动提升为通用档案', t => {
+  const f = fixture(t), dir = path.join(f.a, '.vibemind');
+  fs.mkdirSync(path.join(dir, 'backups'), { recursive: true });
+  const bytes = Buffer.from('\uFEFF' + JSON.stringify({ ...empty, revision: 7, mode: 'paused', profile: '此项目观察', cards: [card], decisions: [decision] }), 'utf8');
+  fs.writeFileSync(path.join(dir, 'state.json'), bytes); fs.writeFileSync(path.join(dir, 'backups', 'old.json'), bytes);
+  assert.equal(f.call('status').migrationRequired, true); assert.equal(fs.existsSync(f.home), false);
+  assert.equal(f.call('init').revision, 7); assert.equal(f.call('init').mode, 'paused');
+  const value = f.call('context', undefined, { topic: 'CORS' });
+  assert.equal(value.userProfile, ''); assert.equal(value.profile, '此项目观察');
+  assert.equal(value.learning.alreadyExplained, false); assert.equal(value.learning.needsLegacyReview, true);
+  assert.equal(value.learning.legacyCards[0].content, card.content);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'state.json')), bytes); assert.deepEqual(fs.readFileSync(path.join(dir, 'backups', 'old.json')), bytes);
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(empty), 'utf8');
+  rejects(() => f.call('init'), 'LEGACY_CHANGED'); rejects(() => f.call('context'), 'LEGACY_CHANGED');
 });
-
-test('符号链接状态文件不能被读取或替换', t => {
-  const root = project(t);
-  const outside = path.join(path.dirname(root), 'external-state.json');
-  fs.writeFileSync(outside, '{}', 'utf8');
-  fs.mkdirSync(path.join(root, '.vibemind'));
-  try {
-    fs.symlinkSync(outside, stateFile(root), 'file');
-  } catch (error) {
-    if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('当前 Windows 权限不允许创建文件符号链接；目录 junction 保护单独测试。');
-    throw error;
+test('损坏、未知版本及无效 UTF-8 旧记录拒绝迁移，不重置', t => {
+  const f = fixture(t); fs.mkdirSync(path.join(f.a, '.vibemind'));
+  for (const [bytes, code] of [[Buffer.from('{bad', 'utf8'), 'INVALID_STATE'], [Buffer.from([0xff]), 'INVALID_STATE'], [Buffer.from(JSON.stringify({ ...empty, schemaVersion: 2 }), 'utf8'), 'UNSUPPORTED_SCHEMA']]) {
+    fs.writeFileSync(path.join(f.a, '.vibemind', 'state.json'), bytes); rejects(() => f.call('init'), code);
+    assert.equal(fs.existsSync(f.home), false); assert.equal(fs.existsSync(path.join(f.a, '.vibemind', 'project.json')), false);
+    assert.deepEqual(fs.readFileSync(path.join(f.a, '.vibemind', 'state.json')), bytes);
   }
-  rejected(run(root, 'status'), 'UNSAFE_PATH');
-  rejected(run(root, 'init'), 'UNSAFE_PATH');
-  assert.equal(fs.readFileSync(outside, 'utf8'), '{}');
 });
-
-test('通过安装目录 junction 调用 CLI 仍执行入口，不在技能目录保存学习状态', t => {
-  const root = project(t);
-  const container = path.dirname(root);
-  const source = path.join(container, 'skill-source');
-  fs.mkdirSync(path.join(source, 'scripts'), { recursive: true });
-  fs.copyFileSync(script, path.join(source, 'scripts', 'vibemind.mjs'));
-  const installed = path.join(container, 'skill-installed');
-  fs.symlinkSync(source, installed, 'junction');
-  const value = ok(run(root, 'init', undefined, [], path.join(installed, 'scripts', 'vibemind.mjs')));
-  assert.equal(value.project, root);
-  assert.ok(!fs.existsSync(path.join(source, '.vibemind')));
+test('移动接续、复制需新身份；删除目录仍按 ID 查看历史', t => {
+  const f = fixture(t), initial = f.call('init'); f.call('record', { expectedRevision: 0, ...explanation });
+  const moved = path.join(f.root, '移动项目'); fs.renameSync(f.a, moved);
+  assert.equal(f.call('context', undefined, { cwd: moved }).revision, 1);
+  assert.equal(f.call('init', undefined, { cwd: moved }).projectId, initial.projectId);
+  const copy = path.join(f.root, '复制项目');
+  fs.mkdirSync(path.join(copy, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(copy, '.vibemind'));
+  fs.copyFileSync(path.join(moved, '.vibemind', 'project.json'), path.join(copy, '.vibemind', 'project.json'));
+  rejects(() => f.call('context', undefined, { cwd: copy }), 'PROJECT_ID_CONFLICT');
+  rejects(() => f.call('init', undefined, { cwd: copy }), 'PROJECT_ID_CONFLICT');
+  assert.notEqual(f.call('init', undefined, { cwd: copy, newProject: true }).projectId, initial.projectId);
+  assert.equal(f.call('context', undefined, { cwd: copy }).cardIndex.length, 0);
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
+  assert.equal(f.call('projects').projects.length, 2);
+  assert.ok(moved.startsWith(f.root + path.sep)); fs.rmSync(moved, { recursive: true });
+  assert.equal(f.call('context', undefined, { projectId: initial.projectId }).cardIndex.length, 1);
+  rejects(() => f.call('record', { expectedRevision: 1, profile: '非法目标' }, { projectId: initial.projectId }), 'USAGE');
 });
-
-test('可以从标准输入导入 CLI 模块，入口不会误访问名为 - 的路径', t => {
-  const root = project(t);
+test('源码子目录恢复；嵌套 Git、worktree、更近半初始化目录隔离', t => {
+  const f = fixture(t); f.call('init');
+  const source = path.join(f.a, 'src', 'api'); fs.mkdirSync(source, { recursive: true });
+  assert.equal(locate(source).project, f.a);
+  const nested = path.join(source, 'nested'); fs.mkdirSync(path.join(nested, '.git'), { recursive: true });
+  assert.equal(f.call('status', undefined, { cwd: nested }).initialized, false);
+  const worktree = path.join(f.a, 'worktree'); fs.mkdirSync(worktree); fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: unused\n', 'utf8');
+  assert.equal(f.call('status', undefined, { cwd: worktree }).initialized, false);
+  const child = path.join(f.a, 'child'); fs.mkdirSync(path.join(child, '.vibemind'), { recursive: true });
+  assert.equal(f.call('status', undefined, { cwd: child }).initialized, false);
+});
+test('符号链接目录和损坏数据库拒绝访问，外部数据不变', t => {
+  const f = fixture(t), outside = path.join(f.root, 'outside');
+  fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'sentinel'), '保持', 'utf8');
+  fs.symlinkSync(outside, path.join(f.a, '.vibemind'), 'junction'); rejects(() => f.call('init'), 'UNSAFE_PATH');
+  fs.symlinkSync(outside, f.home, 'junction'); rejects(() => f.call('user'), 'UNSAFE_PATH');
+  assert.deepEqual(fs.readdirSync(outside), ['sentinel']);
+  const badHome = path.join(f.root, 'bad-db'); fs.mkdirSync(badHome); fs.writeFileSync(path.join(badHome, 'memory.sqlite'), '损坏数据库', 'utf8');
+  rejects(() => execute('record-user', { home: badHome }, { expectedRevision: 0, profile: '不能重置' }), 'INVALID_DATABASE');
+  assert.equal(fs.readFileSync(path.join(badHome, 'memory.sqlite'), 'utf8'), '损坏数据库');
+});
+test('身份原子替换失败和初始化锁不能绕过，失败可重试', t => {
+  const f = fixture(t), rename = fs.renameSync;
+  fs.renameSync = () => { throw new Error('模拟身份替换失败'); };
+  try { rejects(() => f.call('init'), 'WRITE_FAILED'); } finally { fs.renameSync = rename; }
+  assert.deepEqual(fs.readdirSync(path.join(f.a, '.vibemind')), []);
+  assert.deepEqual(f.call('projects').projects, []);
+  f.call('init'); fs.writeFileSync(path.join(f.a, '.vibemind', '.lock'), JSON.stringify({ pid: process.pid }), 'utf8');
+  rejects(() => f.call('init'), 'LOCKED'); assert.equal(f.call('status').locked, true);
+});
+test('在线备份可重新打开读取；已有目的文件不被覆盖', async t => {
+  const f = fixture(t); f.call('init'); f.call('record', { expectedRevision: 0, ...explanation });
+  const output = path.join(f.root, '独立备份.sqlite'); await f.call('backup', undefined, { output });
+  const db = new DatabaseSync(output, { readOnly: true });
+  try {
+    assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM evidence').get().n, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM snapshots').get().n, 1);
+  } finally { db.close(); }
+  const bytes = fs.readFileSync(output);
+  await assert.rejects(f.call('backup', undefined, { output }), error => error.code === 'BACKUP_FAILED');
+  assert.deepEqual(fs.readFileSync(output), bytes);
+});
+test('CLI 参数/编码、junction 安装和 stdin 导入正确', t => {
+  const f = fixture(t), before = disk(f.root);
+  rejected(run(f, 'init', undefined, ['--topic', '错误']), 'USAGE'); rejected(run(f, 'invalid'), 'USAGE');
+  rejected(run(f, 'record', Buffer.from([0xff])), 'INVALID_INPUT');
+  rejected(run(f, 'knowledge', undefined, ['--topic', 'CORS', '--limit', 'NaN']), 'USAGE');
+  assert.deepEqual(disk(f.root), before);
+  const installed = path.join(f.root, '技能安装'); fs.symlinkSync(path.dirname(script), installed, 'junction');
+  ok(run(f, 'init', undefined, [], path.join(installed, 'vibemind.mjs')));
   const program = `import { locate } from ${JSON.stringify(pathToFileURL(script).href)}; process.stdout.write(JSON.stringify(locate(process.argv[2])));`;
-  const value = spawnSync(process.execPath, ['--input-type=module', '-', root], { input: program, encoding: 'utf8', timeout: 10_000 });
-  assert.equal(value.status, 0, value.stderr);
-  assert.equal(JSON.parse(value.stdout).project, root);
+  const value = spawnSync(process.execPath, ['--input-type=module', '-', f.a], { input: program, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(value.status, 0, value.stderr); assert.equal(JSON.parse(value.stdout).project, f.a);
+});
+test('两个 CLI 进程旧版本提交一个成功，另一个拒绝；重读后合并', async t => {
+  const f = fixture(t); f.call('init');
+  const writer = profile => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, 'record', '--cwd', f.a], { env: { ...process.env, VIBEMIND_HOME: f.home } });
+    let stdout = '', stderr = '';
+    child.stdout.setEncoding('utf8').on('data', value => { stdout += value; }); child.stderr.setEncoding('utf8').on('data', value => { stderr += value; });
+    child.once('error', reject); child.once('close', status => resolve({ status, stdout, stderr }));
+    child.stdin.end(JSON.stringify({ expectedRevision: 0, profile }), 'utf8');
+  });
+  const results = await Promise.all(['一', '二'].map(writer));
+  assert.equal(results.filter(value => value.status === 0).length, 1); rejected(results.find(value => value.status === 1), 'CONFLICT');
+  const current = f.call('context'); f.call('record', { expectedRevision: current.revision, profile: current.profile + '；已整合' });
+  assert.equal(f.call('context').revision, 2);
+});
+
+test('首次数据库被两个项目进程同时初始化时，两份身份和记录均保留', async t => {
+  const f = fixture(t);
+  const initialize = cwd => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, 'init', '--cwd', cwd], { env: { ...process.env, VIBEMIND_HOME: f.home } });
+    let stdout = '', stderr = '';
+    child.stdout.setEncoding('utf8').on('data', value => { stdout += value; }); child.stderr.setEncoding('utf8').on('data', value => { stderr += value; });
+    child.once('error', reject); child.once('close', status => resolve({ status, stdout, stderr })); child.stdin.end();
+  });
+  const values = (await Promise.all([f.a, f.b].map(initialize))).map(ok);
+  assert.notEqual(values[0].projectId, values[1].projectId);
+  assert.equal(f.call('projects').projects.length, 2);
+});
+
+test('旧中文卡按明确英文 ID 核对后补充解释事实，不自动判为已解释', t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.a, '.vibemind'));
+  const legacyCard = { id: 'old-card', title: '跨域', content: '已解释同源限制与允许来源；用户独立应用未知。' };
+  fs.writeFileSync(path.join(f.a, '.vibemind', 'state.json'), JSON.stringify({ ...empty, cards: [legacyCard] }), 'utf8');
+  f.call('init'); f.call('init', undefined, { cwd: f.b });
+  f.call('record', { expectedRevision: 0, concepts: explanation.concepts }, { cwd: f.b });
+  const pending = f.call('knowledge', undefined, { conceptId: 'cors' });
+  assert.equal(pending.needsLegacyReview, true); assert.equal(pending.alreadyExplained, false);
+  assert.equal(pending.legacyCards[0].content, legacyCard.content);
+  f.call('record', { expectedRevision: 0, evidence: [{ ...explanation.evidence[0], cardId: legacyCard.id, summary: '已核对旧卡明确记录的实际讲解范围。' }] });
+  assert.equal(f.call('context', undefined, { cwd: f.b, conceptId: 'cors' }).learning.alreadyExplained, true);
+});
+
+test('损坏身份不重置，合法 UUID 大小写一致，未知数据库版本保留', t => {
+  const f = fixture(t), initial = f.call('init'), file = path.join(f.a, '.vibemind', 'project.json');
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, projectId: initial.projectId.toUpperCase() }), 'utf8');
+  assert.equal(f.call('status').projectId, initial.projectId);
+  fs.writeFileSync(file, '{bad identity', 'utf8');
+  const before = disk(f.root);
+  rejects(() => f.call('init'), 'INVALID_IDENTITY'); rejects(() => f.call('context'), 'INVALID_IDENTITY');
+  assert.deepEqual(disk(f.root), before);
+  const db = new DatabaseSync(path.join(f.home, 'memory.sqlite'));
+  db.exec('PRAGMA user_version = 99'); db.close();
+  const bytes = fs.readFileSync(path.join(f.home, 'memory.sqlite'));
+  rejects(() => f.call('user'), 'UNSUPPORTED_DATABASE');
+  assert.deepEqual(fs.readFileSync(path.join(f.home, 'memory.sqlite')), bytes);
 });
