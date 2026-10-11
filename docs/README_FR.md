@@ -20,25 +20,26 @@
 
 <br/>
 
-**Vous concevez. L’IA réalise. Comprenez le code que vous construisez.**
+**Développez avec l’IA, comprenez chaque étape à votre rythme.**
 
-Un Skill d’apprentissage pour Qoder, WorkBuddy et TRAE, accompagné d’un CLI local léger.
+Une chaîne d’outils de guidage adaptatif en programmation pour le Vibe Coding, composée d’un Skill, d’un serveur MCP local et d’un CLI.
+Le guidage s’adapte à chaque sujet et conserve le contexte du projet entre les sessions et les projets.
 
 </div>
 
 ## Qu’est-ce que VibeMind ?
 
-VibeMind associe un Skill qui donne la priorité à l’apprentissage à un CLI chargé de conserver les données de manière fiable. Le Skill accompagne le raisonnement, explique les concepts et réalise les changements clairement autorisés. Le CLI conserve les observations, la carte du projet, les fiches de connaissances et les décisions en cours.
+VibeMind intègre un guidage adaptatif dans le développement assisté par IA. Le Skill s’appuie sur la tâche et le code du projet pour ajuster l’accompagnement à votre expérience sur chaque sujet : clarifier le besoin, comparer les options, expliquer les notions nouvelles et réaliser uniquement le périmètre autorisé. Le serveur MCP local et le CLI partagent un graphe mémoire SQLite qui conserve les cartes de projet, les fiches de connaissances, les décisions de conception et l’historique des concepts entre projets.
 
 Vous utilisez votre outil et votre modèle habituels. MCP et CLI partagent `~/.vibemind/memory.sqlite` ; le projet ne conserve que son identité dans `.vibemind/project.json`. Les préférences et l’historique d’explication sont partagés entre projets. Aucun compte ni API de modèle supplémentaire : l’hôte gère le processus stdio.
 
 Avant chaque explication, consultez l’ID exact du concept ou un alias explicite. Un concept déjà expliqué ne déclenche plus l’explication des bases, même sans preuve d’application. Une demande explicite de révision ou une incompréhension permet de réexpliquer. Les candidats similaires et les concepts parents ne valent pas explication du concept courant.
 
-## Apprendre en construisant
+## Un guidage adaptatif au fil du développement
 
-Présentez votre besoin et votre idée de réalisation. L’agent examine votre raisonnement à partir du code et des contraintes réelles, explique les concepts manquants, discute les compromis puis réalise le périmètre autorisé.
+Partez d’un besoin réel et de votre première idée. Le Skill les confronte au code et aux contraintes existants, vous aide à comparer les choix importants, puis réalise le périmètre que vous avez autorisé.
 
-Votre familiarité est observée sujet par sujet pendant les échanges et le travail. Aucun questionnaire de niveau initial n’est imposé. Un concept expliqué par l’IA est distingué d’une capacité réellement démontrée. Vous pouvez demander des propositions, sauter un exercice ou solliciter une réalisation directe.
+Le guidage s’ajuste selon votre familiarité avec chaque sujet, déduite des échanges et du travail plutôt que d’un questionnaire initial. Les notions nouvelles sont expliquées directement ; les sujets déjà connus passent au cas concret et aux nouveaux détails. Une explication et une application démontrée sont enregistrées séparément. Vous pouvez demander une recommandation, passer une étape ou demander une réalisation directe.
 
 <a id="requirements"></a>
 
@@ -57,7 +58,7 @@ Votre familiarité est observée sujet par sujet pendant les échanges et le tra
 Copiez cette instruction dans votre agent :
 
 ```text
-Lisez le README de https://github.com/TFboy1/VibeMind et installez vibemind comme Skill de projet pour mon outil d’IA actuel, vérifiez Node.js ≥22.20.0, conservez tous les fichiers references, scripts et NOTICE, préservez les Skills et données d’apprentissage existants, ne modifiez pas les paramètres globaux et expliquez comment activer l’apprentissage.
+Lisez le README de https://github.com/TFboy1/VibeMind et installez vibemind comme Skill de guidage du code pour mon outil d’IA actuel. Vérifiez Node.js ≥22.20.0, conservez tous les fichiers references, scripts et NOTICE, préservez les Skills et la mémoire VibeMind existants, ne modifiez pas les paramètres globaux et expliquez comment appeler VibeMind dans un projet.
 ```
 
 L’agent peut utiliser le CLI skills ou l’importation native de votre outil. S’il ne peut pas terminer l’importation lui-même, il doit préciser l’action qui reste à effectuer.
@@ -66,7 +67,7 @@ L’agent peut utiliser le CLI skills ou l’importation native de votre outil. 
 
 #### Avec le CLI skills
 
-Ouvrez un terminal dans le projet concerné :
+Ouvrez un terminal dans le projet où vous utiliserez VibeMind :
 
 ```sh
 npx skills add TFboy1/VibeMind --skill vibemind --copy
@@ -106,25 +107,27 @@ npx skills add /absolute/path/to/VibeMind --skill vibemind --agent qoder --copy
 
 Entourez les chemins Windows contenant des espaces de guillemets.
 
-## Commencer
+## Utiliser VibeMind
 
 Dans votre projet, demandez par exemple :
 
-> Utilisez VibeMind pour m’aider à apprendre en développant. Je souhaite ajouter une réservation de stock à ce projet Vue + FastAPI. Examinez d’abord le code existant, puis discutez avec moi de mon approche.
+> Utilisez VibeMind comme guide de programmation adaptatif pour ce projet. Je souhaite ajouter une réservation de stock à ce projet Vue + FastAPI. Examinez le code et les contraintes, puis aidez-moi à comparer les options de réalisation.
 
 Exemples de demandes :
 
-- « Expliquez d’abord ce concept. »
-- « Sautez cet exercice et réalisez la conception convenue. »
+- « Expliquez ce concept à partir du code de ce projet. »
+- « Je connais les bases ; montrez-moi son application ici. »
+- « Recommandez une approche, puis mettez-la en œuvre. »
+- « Passez l’explication et réalisez la conception convenue. »
 - « Revenons sur mes fiches concernant CORS. »
-- « Mettez l’apprentissage en pause. »
+- « Mettez le guidage VibeMind en pause. »
 - « Reprenez VibeMind et les décisions en cours. »
 
-L’installation seule n’active pas l’apprentissage dans tous les projets. Une fois activées, les demandes ordinaires de développement conservent le parcours d’apprentissage. Une nouvelle conversation ou un changement d’outil nécessite de rappeler explicitement VibeMind ; les Hooks automatiques ne font pas partie de cette première version.
+L’installation ne crée ni n’active automatiquement les projets. Appelez VibeMind dans le projet concerné ; les demandes de développement ordinaires seront ensuite guidées selon le sujet et le contexte du code. Dans une nouvelle conversation ou un autre outil, rappelez VibeMind pour retrouver ce contexte. Les Hooks automatiques ne font pas partie de cette première version.
 
 Confirmer une conception enregistre le choix présenté. Cela n’autorise pas implicitement d’autres changements. Une autorisation explicite déjà donnée pour le même périmètre est réutilisée.
 
-## MCP local
+## MCP local : une configuration, un contexte partagé entre projets
 
 Conservez le dépôt complet dans un répertoire fixe et exécutez `npm ci` une fois. Configurez un serveur stdio dans l’hôte avec le chemin absolu réel :
 
@@ -132,7 +135,7 @@ Conservez le dépôt complet dans un répertoire fixe et exécutez `npm ci` une 
 {"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
 ```
 
-Sous Windows, utilisez par exemple `D:/tools/VibeMind/scripts/mcp.mjs`. L’hôte lance et ferme le processus, sans port HTTP. Pour changer le stockage, utilisez le même `VIBEMIND_HOME` absolu dans tous les hôtes. La connexion seule n’active pas l’apprentissage et ne crée pas de données. Le ZIP contient le CLI sans dépendances tierces ; le MCP s’exécute depuis le dépôt complet avec son SDK.
+Sous Windows, utilisez par exemple `D:/tools/VibeMind/scripts/mcp.mjs`. L’hôte lance et ferme le processus, sans port HTTP. Pour changer le stockage, utilisez le même `VIBEMIND_HOME` absolu dans tous les hôtes. La connexion seule n’initialise aucun projet et n’active pas le guidage. Le ZIP contient le CLI sans dépendances tierces ; le MCP s’exécute depuis le dépôt complet avec son SDK.
 
 ## CLI
 
@@ -186,12 +189,12 @@ node --test
 npx skills add . --list
 ```
 
-Les tests utilisent le moteur intégré de Node et des projets temporaires. Ils couvrent les mises à jour, les lectures seules, la pause, les processus concurrents, les données corrompues, les erreurs de sauvegarde, les chemins Unicode et l’isolation des projets. Vérifiez l’expérience pédagogique dans votre outil : explications directes, décisions préservées et distinction entre avoir entendu et savoir appliquer.
+Les tests utilisent le moteur intégré de Node et des projets temporaires. Ils couvrent les mises à jour, les lectures seules, la pause, les processus concurrents, les données corrompues, les erreurs de sauvegarde, les chemins Unicode et l’isolation des projets. Vérifiez le guidage dans votre outil : profondeur adaptée à chaque sujet, décisions conservées, explications non répétées par défaut et distinction entre une notion expliquée et une application démontrée.
 
 ## Sources et soutien
 
 VibeMind s’inspire de [VibeWise](https://github.com/nykooi1/vibe-wise), par Noah Kim, et adapte ses principes : conception dirigée par l’apprenant, explication directe, étapes de décision, preuves d’apprentissage, carte du projet et restauration des décisions. Les limites de projet et les sauvegardes s’appuient également sur cette référence.
 
-VibeMind ajoute son CLI Node, MCP stdio local, graphe SQLite utilisateur, identités de projet, migration JSON, instantanés transactionnels, sauvegardes en ligne et vérification des explications entre projets. Les attributions et les deux licences MIT figurent dans [NOTICE.md](../skills/vibemind/NOTICE.md).
+VibeMind ajoute son guidage adaptatif du code, son CLI Node, son MCP stdio local, son graphe SQLite utilisateur, les identités de projet, la migration JSON, les instantanés transactionnels, les sauvegardes en ligne et la vérification précise des explications entre projets. Les attributions et les deux licences MIT figurent dans [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 Les boutons de soutien utilisent les mêmes destinations que le projet [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) du mainteneur.

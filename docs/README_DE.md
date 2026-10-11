@@ -20,25 +20,26 @@
 
 <br/>
 
-**Du entwirfst. Die KI setzt um. Verstehe den Code, den du entwickelst.**
+**Entwickle mit KI und verstehe jeden Schritt in deinem Tempo.**
 
-Ein Lern-Skill für Qoder, WorkBuddy und TRAE mit einer schlanken lokalen CLI.
+Eine adaptive Toolchain zur Programmierführung für Vibe Coding, bestehend aus Skill, lokalem MCP-Server und CLI.
+Die Führung passt sich je Thema an und erhält den Projektkontext über Sitzungen und Projekte hinweg.
 
 </div>
 
 ## Was ist VibeMind?
 
-VibeMind verbindet einen Skill, der das Lernen in den Vordergrund stellt, mit einer zuverlässigen CLI zur Zustandsverwaltung. Der Skill begleitet deine Überlegungen, erklärt Konzepte und setzt klar autorisierte Entwürfe um. Die CLI speichert Lernbeobachtungen, eine Projektübersicht, Wissenskarten und offene Entscheidungen.
+VibeMind integriert adaptive Programmierführung in die tägliche KI-gestützte Entwicklung. Der Skill nutzt Aufgabe und Projektcode, um die Unterstützung an deine Erfahrung mit jedem Thema anzupassen: Anforderungen klären, Ansätze vergleichen, neue Konzepte erklären und nur den ausdrücklich autorisierten Umfang umsetzen. Lokaler MCP-Server und CLI teilen einen SQLite-Erinnerungsgraphen für Projektübersichten, Wissenskarten, Entwurfsentscheidungen und projektübergreifende Konzepthistorie.
 
 Du nutzt dein vorhandenes Werkzeug und Modell. MCP und CLI teilen `~/.vibemind/memory.sqlite`; im Projekt liegt nur `.vibemind/project.json` als Identität. Vorlieben und Erklärungshistorie gelten projektübergreifend. Zusätzliche Konten oder Modell-APIs sind nicht nötig, den stdio-Prozess verwaltet der Host.
 
 Vor jeder Erklärung wird die genaue Konzept-ID oder ein ausdrücklich gebundener Alias geprüft. Bereits erklärte Grundlagen werden standardmäßig übersprungen, auch ohne Anwendungsnachweis. Bei gewünschter Wiederholung oder weiterem Unverständnis darf erneut erklärt werden. Ähnliche Treffer und übergeordnete Konzepte belegen keine Erklärung des aktuellen Konzepts.
 
-## Lernen beim Entwickeln
+## Adaptive Führung beim Entwickeln
 
-Beschreibe dein Ziel und deinen Lösungsansatz. Die KI prüft ihn anhand des tatsächlichen Codes und der Anforderungen, erklärt fehlende Grundlagen, bespricht Abwägungen und setzt den autorisierten Umfang um.
+Beginne mit einer konkreten Aufgabe und deinem aktuellen Ansatz. Der Skill gleicht beides mit dem vorhandenen Code und den Anforderungen ab, hilft dir, wichtige Abwägungen zu treffen, und setzt anschließend den autorisierten Umfang um.
 
-Deine Kenntnisse werden je Thema aus Gesprächen und praktischer Arbeit abgeleitet. Es gibt keinen Einstufungsfragebogen zu Beginn. Eine Erklärung durch die KI wird von nachgewiesener eigener Anwendung unterschieden. Du kannst Vorschläge anfordern, eine Übung überspringen oder eine direkte Umsetzung verlangen.
+Die Führung passt sich deiner Vertrautheit mit jedem Thema an, abgeleitet aus Gesprächen und praktischer Arbeit statt aus einem Einstufungsfragebogen. Neue Konzepte werden direkt erklärt; bekannte Themen führen zum aktuellen Anwendungsfall und zu neuen Details. Eine Erklärung und der Nachweis eigener Anwendung werden getrennt festgehalten. Du kannst Empfehlungen anfordern, einen Schritt überspringen oder eine direkte Umsetzung verlangen.
 
 <a id="requirements"></a>
 
@@ -57,7 +58,7 @@ Deine Kenntnisse werden je Thema aus Gesprächen und praktischer Arbeit abgeleit
 Kopiere diese Anweisung in deinen aktuellen Agenten:
 
 ```text
-Lies die README unter https://github.com/TFboy1/VibeMind und installiere vibemind als Projekt-Skill für mein aktuelles KI-Werkzeug, prüfe Node.js ≥22.20.0, behalte alle references-, scripts- und NOTICE-Dateien bei, überschreibe keine vorhandenen Skills oder Lerndaten, ändere keine globalen Einstellungen und erkläre mir, wie ich den Lernmodus starte.
+Lies die README unter https://github.com/TFboy1/VibeMind und installiere vibemind als Skill zur Programmierführung für mein aktuelles KI-Werkzeug. Prüfe Node.js ≥22.20.0, behalte alle references-, scripts- und NOTICE-Dateien bei, überschreibe keine vorhandenen Skills oder VibeMind-Daten, ändere keine globalen Einstellungen und erkläre mir, wie ich VibeMind in einem Projekt aufrufe.
 ```
 
 Der Agent kann die skills-CLI oder den Import deines Werkzeugs verwenden. Kann er einen Import nicht selbst abschließen, soll er den noch erforderlichen manuellen Schritt deutlich benennen.
@@ -66,7 +67,7 @@ Der Agent kann die skills-CLI oder den Import deines Werkzeugs verwenden. Kann e
 
 #### Mit der skills-CLI
 
-Öffne ein Terminal im gewünschten Projekt:
+Öffne ein Terminal im Projekt, in dem du VibeMind einsetzen möchtest:
 
 ```sh
 npx skills add TFboy1/VibeMind --skill vibemind --copy
@@ -106,25 +107,27 @@ npx skills add /absolute/path/to/VibeMind --skill vibemind --agent qoder --copy
 
 Setze Windows-Pfade mit Leerzeichen in Anführungszeichen.
 
-## Den Lernmodus starten
+## VibeMind einsetzen
 
 Bitte deinen Agenten beispielsweise:
 
-> Nutze VibeMind, damit ich beim Entwickeln lerne. Ich möchte diesem Vue-und-FastAPI-Projekt eine Bestandsreservierung hinzufügen. Prüfe zuerst den vorhandenen Code und besprich dann meinen Lösungsansatz mit mir.
+> Nutze VibeMind als adaptive Programmierführung für dieses Projekt. Ich möchte diesem Vue-und-FastAPI-Projekt eine Bestandsreservierung hinzufügen. Prüfe den vorhandenen Code und die Anforderungen, und hilf mir dann, die Lösungsansätze zu vergleichen.
 
 Weitere Anweisungen:
 
-- „Erkläre zuerst dieses Konzept.“
-- „Überspringe diese Übung und setze den vereinbarten Entwurf um.“
+- „Erkläre dieses Konzept anhand des aktuellen Projekts.“
+- „Die Grundlagen kenne ich; zeig mir die Anwendung hier.“
+- „Empfiehl einen Ansatz und setze ihn anschließend um.“
+- „Überspringe die Erklärung und setze den vereinbarten Entwurf um.“
 - „Gehe mit mir die Wissenskarten zu CORS durch.“
-- „Pausiere den Lernmodus.“
+- „Pausiere die VibeMind-Führung.“
 - „Setze VibeMind fort und beginne mit den offenen Entscheidungen.“
 
-Die Installation aktiviert den Lernmodus nicht in jedem Projekt. Nach der Aktivierung behalten normale Entwicklungsaufträge den Lernablauf bei. In einer neuen Unterhaltung oder einem anderen Werkzeug rufst du VibeMind ausdrücklich erneut auf. Automatische Hooks gehören nicht zur ersten Version.
+Die Installation initialisiert oder aktiviert kein Projekt automatisch. Rufe VibeMind im gewünschten Projekt auf; danach werden auch gewöhnliche Entwicklungsaufträge passend zum Thema und Projektkontext begleitet. In einer neuen Unterhaltung oder einem anderen Werkzeug rufst du VibeMind erneut auf, um diesen Kontext wiederherzustellen. Automatische Hooks gehören nicht zur ersten Version.
 
 Die Bestätigung eines Entwurfs hält die dargestellte Entscheidung fest. Sie autorisiert keine weiteren, unbesprochenen Implementierungen. Eine bereits ausdrücklich erteilte Autorisierung für denselben Umfang gilt weiter.
 
-## Lokaler MCP
+## Lokaler MCP: einmal einrichten, Kontext projektübergreifend nutzen
 
 Bewahre das vollständige Repository in einem festen Verzeichnis auf und führe einmal `npm ci` aus. Trage den tatsächlichen absoluten Skriptpfad als stdio-Server beim Host ein:
 
@@ -132,7 +135,7 @@ Bewahre das vollständige Repository in einem festen Verzeichnis auf und führe 
 {"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
 ```
 
-Unter Windows etwa `D:/tools/VibeMind/scripts/mcp.mjs`. Der Host startet und beendet den Prozess ohne HTTP-Port. Für einen anderen Speicherort verwenden alle Hosts denselben absoluten `VIBEMIND_HOME`. Die Verbindung allein aktiviert kein Lernen und erstellt keine Einträge. Das ZIP enthält die CLI ohne Drittanbieter-Abhängigkeiten; MCP läuft mit dem SDK aus dem vollständigen Repository.
+Unter Windows etwa `D:/tools/VibeMind/scripts/mcp.mjs`. Der Host startet und beendet den Prozess ohne HTTP-Port. Für einen anderen Speicherort verwenden alle Hosts denselben absoluten `VIBEMIND_HOME`. Die Verbindung allein initialisiert kein Projekt und aktiviert keine Führung. Das ZIP enthält die CLI ohne Drittanbieter-Abhängigkeiten; MCP läuft mit dem SDK aus dem vollständigen Repository.
 
 ## CLI
 
@@ -186,12 +189,12 @@ node --test
 npx skills add . --list
 ```
 
-Die Tests verwenden Nodes integrierten Test-Runner und temporäre Projekte. Geprüft werden Aktualisierungen, reine Lesevorgänge, Pausen, parallele Prozesse, beschädigte Daten, Backup- und Schreibfehler, Unicode-Pfade und Projektgrenzen. Den Lernablauf prüfst du in deinem Werkzeug: direkte Erklärungen, erhaltene offene Entscheidungen und eine klare Trennung zwischen gehörtem und angewendetem Wissen.
+Die Tests verwenden Nodes integrierten Test-Runner und temporäre Projekte. Geprüft werden Aktualisierungen, reine Lesevorgänge, Pausen, parallele Prozesse, beschädigte Daten, Backup- und Schreibfehler, Unicode-Pfade und Projektgrenzen. Prüfe die Führung in deinem Werkzeug: Sie sollte sich dem Kenntnisstand je Thema anpassen, offene Entscheidungen erhalten, Erklärungen standardmäßig nicht wiederholen und Erklärungen von nachgewiesener Anwendung unterscheiden.
 
 ## Quellen und Unterstützung
 
 VibeMind übernimmt und adaptiert Ideen aus [VibeWise](https://github.com/nykooi1/vibe-wise) von Noah Kim: vom Lernenden gestaltete Entwürfe, direkte Erklärungen, Entscheidungspunkte, belegbare Lernbeobachtungen, Projektübersichten und die Wiederaufnahme offener Entscheidungen. Auch Projektgrenzen und Backups orientieren sich am Original.
 
-Dieses Projekt ergänzt Node-CLI, lokalen stdio-MCP, Benutzer-SQLite-Graph, Projektidentität, JSON-Migration, Transaktionssnapshots, Online-Backups und projektübergreifende Erklärungskontrolle. Herkunft und beide MIT-Lizenzen stehen in [NOTICE.md](../skills/vibemind/NOTICE.md).
+Dieses Projekt ergänzt adaptive Programmierführung, Node-CLI, lokalen stdio-MCP, Benutzer-SQLite-Graph, Projektidentität, JSON-Migration, Transaktionssnapshots, Online-Backups und genaue projektübergreifende Erklärungskontrolle. Herkunft und beide MIT-Lizenzen stehen in [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 Die Unterstützungsbuttons führen zu denselben Zielen wie beim [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) des Maintainers.

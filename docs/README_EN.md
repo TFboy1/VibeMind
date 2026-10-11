@@ -20,25 +20,26 @@
 
 <br/>
 
-**You shape the design. AI implements it. Understand the code you build.**
+**Build with AI. Understand the work at your own pace.**
 
-A learning companion for Qoder, WorkBuddy and TRAE, with a lightweight local CLI.
+An adaptive coding guidance toolchain for Vibe Coding, built from a Skill, a local MCP server and CLI.
+Guidance adapts by topic; project and explanation history can be resumed across sessions and projects.
 
 </div>
 
 ## What VibeMind does
 
-VibeMind combines a learning-first Skill with reliable local state management. The Skill guides reasoning, explains unfamiliar concepts and implements clearly authorized designs. The CLI stores learning observations, a project map, knowledge cards and unfinished decisions.
+VibeMind brings adaptive coding guidance into day-to-day AI development. Its Skill uses the task and project context to adjust guidance to your experience with each topic: clarify requirements, compare implementation choices, explain unfamiliar concepts and implement only the scope you authorize. The local MCP server and CLI share an SQLite memory graph for project maps, knowledge cards, design decisions and cross-project concept history.
 
 Use your existing model and tools. MCP and CLI share `~/.vibemind/memory.sqlite`; each project only keeps `.vibemind/project.json` for identity. Preferences and explanation history work across projects. No extra account or model API is required; the host manages the stdio process.
 
 Before explaining a concept, query its exact ID or an explicit alias. An already explained concept skips the basics by default, even without application evidence. Explicit review requests or continued confusion allow another explanation. Related concepts and fuzzy candidates do not imply that the current concept was explained.
 
-## How learning works
+## How guidance works
 
-Explain what you want and how you would approach it. Your agent checks that reasoning against the actual code and constraints, teaches missing concepts, discusses tradeoffs and implements the authorized scope.
+Start with a real task and your current approach. The Skill checks them against the existing code and constraints, helps you weigh meaningful tradeoffs, then implements the scope you authorize.
 
-Experience is inferred per topic from real conversation and work, rather than an opening questionnaire. Hearing an explanation is recorded separately from demonstrating that you can apply it. You can request suggestions, skip an exercise or ask for direct implementation.
+Guidance adapts to your familiarity with each topic, inferred from conversation and work rather than an opening questionnaire. New concepts are explained directly; familiar topics move to the current use case and new details. You can ask for a recommendation, skip an exercise or request direct implementation. An explanation and demonstrated application are recorded separately.
 
 <a id="requirements"></a>
 
@@ -57,7 +58,7 @@ Experience is inferred per topic from real conversation and work, rather than an
 Copy this instruction into your current agent:
 
 ```text
-Read the README at https://github.com/TFboy1/VibeMind and install vibemind as a project skill for my current AI tool, check Node.js ≥22.20.0, keep all references, scripts and NOTICE files, preserve existing skills and learning records, leave global settings unchanged, and tell me how to enable learning.
+Read the README at https://github.com/TFboy1/VibeMind and install vibemind as the coding guidance Skill for my current AI tool. Check Node.js ≥22.20.0, keep all references, scripts and NOTICE files, preserve existing Skills and memory, leave global settings unchanged, and show me how to invoke VibeMind in a project.
 ```
 
 The agent can use the skills CLI or the tool's native import flow. If it cannot complete a native import itself, it should explain the remaining user action accurately.
@@ -66,7 +67,7 @@ The agent can use the skills CLI or the tool's native import flow. If it cannot 
 
 #### Through the skills CLI
 
-Open a terminal in the project you want to learn:
+Open a terminal in the project where you want to use VibeMind:
 
 ```sh
 npx skills add TFboy1/VibeMind --skill vibemind --copy
@@ -109,25 +110,27 @@ npx skills add /absolute/path/to/VibeMind --skill vibemind --agent qoder --copy
 
 Quote paths containing spaces on Windows.
 
-## Start learning
+## Use VibeMind
 
 In your project, ask:
 
-> Use VibeMind to help me learn while building. I want to add inventory reservations to this Vue + FastAPI project. Inspect the existing code, then discuss my implementation approach with me.
+> Use VibeMind as my adaptive coding guide for this project. I want to add inventory reservations to this Vue + FastAPI project. Inspect the existing code and constraints, then help me compare implementation choices.
 
 Useful requests:
 
-- “Explain this concept first.”
-- “Skip this exercise and implement the agreed design.”
-- “Review my knowledge cards about CORS.”
-- “Pause learning.”
-- “Resume VibeMind and continue unfinished decisions.”
+- “Explain this concept using the current project.”
+- “I know the basics; focus on how this applies here.”
+- “Recommend an approach, then implement it.”
+- “Skip the explanation and implement the agreed design.”
+- “Show me my CORS knowledge cards.”
+- “Pause VibeMind guidance.”
+- “Resume VibeMind and continue the unfinished decisions.”
 
-Installing a Skill does not enable learning in every project. After activation, ordinary development requests retain the learning flow. A new conversation or tool switch requires explicitly invoking VibeMind again; automatic hooks are outside this first release.
+Installing the Skill does not initialize or activate every project automatically. Invoke VibeMind in the project to start; ordinary development requests then receive guidance adapted to the current topic and project context. In a new conversation or another tool, invoke VibeMind again to restore that context. Automatic hooks are outside this first release.
 
 A design confirmation records that design. It does not grant implementation permission for unmentioned work. Existing explicit authorization for the same scope is reused.
 
-## Local MCP
+## Local MCP: one setup, shared context across projects
 
 Keep the full repository in a stable directory and run `npm ci` once. Add a stdio server to your host, replacing the absolute script path:
 
@@ -135,7 +138,7 @@ Keep the full repository in a stable directory and run `npm ci` once. Add a stdi
 {"mcpServers":{"vibemind":{"command":"node","args":["/absolute/path/to/VibeMind/scripts/mcp.mjs"]}}}
 ```
 
-On Windows, use a path such as `D:/tools/VibeMind/scripts/mcp.mjs`. The host starts and stops the process; no HTTP port is needed. Use the same absolute `VIBEMIND_HOME` in all hosts to override the default user directory. Connecting does not enable learning or create records. The Skill ZIP includes the standard-library CLI; the MCP server runs from the full repository with its SDK dependencies.
+On Windows, use a path such as `D:/tools/VibeMind/scripts/mcp.mjs`. The host starts and stops the process; no HTTP port is needed. Use the same absolute `VIBEMIND_HOME` in all hosts to override the default user directory. Connecting does not initialize a project or activate guidance. The Skill ZIP includes the standard-library CLI; the MCP server runs from the full repository with its SDK dependencies.
 
 ## CLI
 
@@ -189,12 +192,12 @@ node --test
 npx skills add . --list
 ```
 
-Tests use Node's built-in runner and temporary projects. They cover stable updates, readonly restoration, paused state, concurrent processes, corrupted data, backup/write failures, Unicode paths and project isolation. Teaching behavior should be checked in your own host: concepts should be explained directly, unfinished decisions retained, and hearing an explanation should not be marked as mastery.
+Tests use Node's built-in runner and temporary projects. They cover stable updates, readonly restoration, paused state, concurrent processes, corrupted data, backup/write failures, Unicode paths and project isolation. Check guidance in your own host: it should adapt to topic familiarity, preserve unfinished decisions, avoid repeating explanations by default and distinguish an explanation from demonstrated application.
 
 ## Sources and support
 
 VibeMind borrows and adapts [VibeWise](https://github.com/nykooi1/vibe-wise) by Noah Kim: learner-owned design, direct concept teaching, checkpoint semantics, evidence-based learning records, project maps and unfinished-decision restoration. The project-boundary and backup design also draw on its implementation.
 
-This project adds its Node CLI, local stdio MCP, user-level SQLite graph, stable project identity, legacy migration, transaction snapshots, online backups and explanation checks across projects. Source attribution and both MIT notices are included in [NOTICE.md](../skills/vibemind/NOTICE.md).
+This project adds its adaptive coding guidance workflow, Node CLI, local stdio MCP, user-level SQLite graph, stable project identity, legacy migration, transaction snapshots, online backups and exact explanation checks across projects. Source attribution and both MIT notices are included in [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 The support buttons above use the same destinations as the maintainer's [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) project.
