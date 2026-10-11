@@ -6,10 +6,25 @@
 
 **面向 Vibe Coding 的自适应编程引导工具链**
 
-[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install%20VibeMind-00C853?style=flat-square)](https://skills.sh/tfboy1/vibemind/vibemind)
-[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.20.0-3C873A?style=flat-square&logo=nodedotjs&logoColor=white)](#运行要求)
+[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install%20VibeMind-00C853?style=for-the-badge&logo=hackthebox&logoColor=white)](https://skills.sh/tfboy1/vibemind/vibemind)
+[![爱发电](https://img.shields.io/badge/爱发电-Support%20Me-FF69B4?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://www.ifdian.net/item/1a20ed042f0711f1865a52540025c377)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-☕-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.creem.io/payment/prod_1yc40mIhKwwrc7iqFOG9G2)
+[![GitHub Stars](https://img.shields.io/github/stars/tfboy1/vibemind?style=for-the-badge&logo=github&color=yellow)](https://github.com/TFboy1/VibeMind/stargazers)
+[![License](https://img.shields.io/github/license/tfboy1/vibemind?style=for-the-badge&color=blue)](LICENSE)
 
-[English](docs/README_EN.md) · [日本語](docs/README_JA.md) · [Français](docs/README_FR.md) · [Deutsch](docs/README_DE.md)
+<br/>
+
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.20.0-3C873A?style=flat-square&logo=nodedotjs&logoColor=white)](#运行要求)
+[![MCP](https://img.shields.io/badge/MCP-local%20stdio-7c3aed?style=flat-square)](https://modelcontextprotocol.io/)
+[![SQLite](https://img.shields.io/badge/Memory-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+
+<br/>
+
+[![简体中文](https://img.shields.io/badge/简体中文-当前语言-red?style=flat-square)](#)
+[![English](https://img.shields.io/badge/English-README-blue?style=flat-square)](docs/README_EN.md)
+[![日本語](https://img.shields.io/badge/日本語-README-blue?style=flat-square)](docs/README_JA.md)
+[![Français](https://img.shields.io/badge/Français-README-blue?style=flat-square)](docs/README_FR.md)
+[![Deutsch](https://img.shields.io/badge/Deutsch-README-blue?style=flat-square)](docs/README_DE.md)
 
 </div>
 
