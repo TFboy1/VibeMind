@@ -11,12 +11,23 @@ import { fileURLToPath } from 'node:url';
 const COMMANDS = new Set(['init', 'status', 'context', 'record', 'pause', 'resume', 'user', 'record-user', 'projects', 'knowledge', 'backup']);
 const STAGES = new Set(['reasoning', 'design', 'implementation', 'completed']);
 const STATE_KEYS = ['schemaVersion', 'revision', 'mode', 'profile', 'projectMap', 'cards', 'decisions'];
-const PATCH_KEYS = ['expectedRevision', 'profile', 'projectMap', 'cards', 'decisions', 'concepts', 'links', 'evidence'];
+const PATCH_KEYS = ['expectedRevision', 'profile', 'projectMap', 'cards', 'decisions', 'concepts', 'links', 'evidence', 'retractEvidence', 'removeAliases'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPLICATION_ID = 0x564d494e;
+export const LIMITS = Object.freeze({ textBytes: 128 * 1024, patchBytes: 512 * 1024, stateBytes: 512 * 1024, responseBytes: 2 * 1024 * 1024 });
 
 function fail(code, message) {
   throw Object.assign(new Error(message), { code });
+}
+
+function checkSize(value, maximum, label, code = 'INPUT_TOO_LARGE') {
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, 'utf8') > maximum) fail(code, `${label}超过 ${maximum} 个 UTF-8 字节；请缩小内容或使用 CLI 读取完整历史，不会截断未完成决定。`);
+  return serialized;
+}
+
+export function checkResponse(value) {
+  return checkSize({ ok: true, ...value }, LIMITS.responseBytes, '响应', 'RESPONSE_TOO_LARGE');
 }
 
 function entry(file) {
@@ -62,6 +73,7 @@ function object(value, keys, code, label) {
 
 function text(value, code, label, nonempty = false) {
   if (typeof value !== 'string' || (nonempty && !value.trim())) fail(code, `${label}必须是${nonempty ? '非空' : ''}字符串。`);
+  if (['INVALID_INPUT', 'USAGE'].includes(code) && Buffer.byteLength(value, 'utf8') > LIMITS.textBytes) fail('INPUT_TOO_LARGE', `${label}超过 ${LIMITS.textBytes} 个 UTF-8 字节；请缩小参数或保存简短摘要。`);
 }
 
 function revision(value, code) {
@@ -203,6 +215,7 @@ function validatePatch(patch) {
     ['concepts', ['id', 'title', 'aliases']],
     ['links', ['cardId', 'conceptId']],
     ['evidence', ['id', 'conceptId', 'cardId', 'kind', 'scope', 'summary', 'codeLocation']],
+    ['removeAliases', ['conceptId', 'alias']],
   ]) {
     if (!Object.hasOwn(patch, key)) continue;
     if (!Array.isArray(patch[key])) fail('INVALID_INPUT', `${key} 必须是数组。`);
@@ -210,7 +223,7 @@ function validatePatch(patch) {
     for (const item of patch[key]) {
       object(item, keys, 'INVALID_INPUT', key);
       for (const field of keys.filter(value => !['aliases', 'codeLocation'].includes(value))) text(item[field], 'INVALID_INPUT', field, true);
-      const id = item.id ?? JSON.stringify([item.cardId, item.conceptId]);
+      const id = item.id ?? JSON.stringify(key === 'removeAliases' ? [item.conceptId, normalize(item.alias)] : [item.cardId, item.conceptId]);
       if (id !== id.trim() || ids.has(id)) fail('INVALID_INPUT', `${key} 的 ID 不能重复或带首尾空白。`);
       ids.add(id);
       if (item.aliases !== undefined) {
@@ -221,6 +234,20 @@ function validatePatch(patch) {
       if (key === 'evidence' && !['explained', 'applied'].includes(item.kind)) fail('INVALID_INPUT', '证据 kind 必须是 explained 或 applied。');
     }
   }
+  if (patch.retractEvidence !== undefined) {
+    if (!Array.isArray(patch.retractEvidence)) fail('INVALID_INPUT', 'retractEvidence 必须是证据 ID 数组。');
+    const ids = new Set();
+    for (const id of patch.retractEvidence) {
+      text(id, 'INVALID_INPUT', 'retractEvidence ID', true);
+      if (id !== id.trim() || ids.has(id) || patch.evidence?.some(value => value.id === id)) fail('INVALID_INPUT', '撤销 ID 不能重复、带首尾空白或在同批重新写入；更正后的事实使用新 ID。');
+      ids.add(id);
+    }
+  }
+  for (const item of patch.removeAliases ?? []) {
+    const concept = patch.concepts?.find(value => value.id === item.conceptId);
+    if (concept && [concept.id, concept.title, ...(concept.aliases ?? [])].some(value => normalize(value) === normalize(item.alias))) fail('INVALID_INPUT', '不能在同批删除并重新加入同一概念的同一别名。');
+  }
+  checkSize(patch, LIMITS.patchBytes, '单批记录');
 }
 
 const SCHEMA = `
@@ -320,6 +347,7 @@ function withStore(options, write, action) {
   const store = openStore(options, write);
   try {
     const result = action(store.db, store);
+    if (write) checkResponse(result);
     store.db?.exec('COMMIT;');
     return result;
   } catch (error) {
@@ -339,7 +367,14 @@ function readIdentity(location) {
 }
 
 function checkProject(row, location) {
-  if (pathKey(row.path) !== pathKey(location.project) && entry(row.path)) fail('PROJECT_ID_CONFLICT', '原项目目录仍存在，相同 projectId 不能绑定到两个目录；复制项目请运行 init --new-project。');
+  if (pathKey(row.path) !== pathKey(location.project)) {
+    const original = entry(row.path);
+    if (original?.isSymbolicLink()) fail('UNSAFE_PATH', '原登记项目路径不能是符号链接；请核对项目移动后的路径。');
+    if (original?.isDirectory()) {
+      const stateDir = path.join(row.path, '.vibemind');
+      if (safeEntry(stateDir, true) && readIdentity({ identityFile: path.join(stateDir, 'project.json') }) === row.id) fail('PROJECT_ID_CONFLICT', '原项目目录仍持有相同 projectId；复制项目请运行 init --new-project。');
+    }
+  }
   if (row.legacy_hash && safeEntry(location.stateFile) && hash(fs.readFileSync(location.stateFile)) !== row.legacy_hash) fail('LEGACY_CHANGED', '已导入的旧 state.json 发生变化；先整合旧工具的新增记录，不能自动覆盖数据库。');
 }
 
@@ -384,6 +419,16 @@ function saveSnapshot(db, scope, currentRevision, value) {
 
 function addGraph(db, projectId, state, input) {
   let changed = false;
+  for (const item of input.removeAliases ?? []) {
+    const concept = db.prepare('SELECT title FROM concepts WHERE id = ?').get(item.conceptId);
+    if (!concept) fail('INVALID_INPUT', '撤销别名必须引用已存在的概念。');
+    const alias = normalize(item.alias);
+    if ([item.conceptId, concept.title].some(value => normalize(value) === alias)) fail('INVALID_INPUT', '概念 ID 和标题的定位别名不能撤销；只更正额外别名。');
+    const existing = db.prepare('SELECT concept_id FROM aliases WHERE name = ?').get(alias);
+    if (existing && existing.concept_id !== item.conceptId) fail('CONCEPT_CONFLICT', '别名归属已变化；重新查询后再更正，不能删除其他概念的绑定。');
+    changed = Boolean(db.prepare('DELETE FROM aliases WHERE name = ? AND concept_id = ?').run(alias, item.conceptId).changes) || changed;
+  }
+  for (const id of input.retractEvidence ?? []) changed = Boolean(db.prepare('DELETE FROM evidence WHERE project_id = ? AND id = ?').run(projectId, id).changes) || changed;
   for (const concept of input.concepts ?? []) {
     const previous = db.prepare('SELECT title FROM concepts WHERE id = ?').get(concept.id);
     if (previous && previous.title !== concept.title) fail('CONCEPT_CONFLICT', `概念 ${concept.id} 已有不同标题；查询并复用原概念，不自动合并。`);
@@ -404,6 +449,8 @@ function addGraph(db, projectId, state, input) {
   }
   for (const item of input.evidence ?? []) {
     const previous = db.prepare(`${EVIDENCE_SELECT} WHERE e.project_id = ? AND e.id = ?`).get(projectId, item.id);
+    if (!previous && db.prepare(`SELECT 1 FROM snapshots s, json_each(s.content, '$.evidence') e
+      WHERE s.scope = ? AND json_extract(e.value, '$.id') = ? LIMIT 1`).get(`project:${projectId}`, item.id)) fail('INVALID_INPUT', '已撤销的证据 ID 不能重用；更正后的事实使用新 ID。');
     if (previous && ['conceptId', 'cardId', 'kind'].some(key => previous[key] !== item[key])) fail('INVALID_INPUT', '证据 ID 的概念、来源卡片和种类不能改变；新的观察使用新 ID，已解释记录独立保留。');
     const fields = { ...item, codeLocation: item.codeLocation ?? '' };
     if (previous && Object.entries(fields).every(([key, value]) => previous[key] === value)) continue;
@@ -457,7 +504,7 @@ function knowledge(db, options) {
     concepts: related.slice(0, limit).map(({ explained, ...value }) => ({ ...value, alreadyExplained: Boolean(explained) })),
     evidence: proof.slice(0, limit), links: links.slice(0, limit), cards: cards(sources), legacyCards: cards(legacy),
     needsLegacyReview: !explained && legacy.length > 0,
-    guidance: explained ? 'skip_basics' : legacy.length ? 'review_legacy' : !exact && candidates.length ? 'resolve_concept' : 'not_recorded',
+    guidance: explained ? 'skip_covered_scope' : legacy.length ? 'review_legacy' : !exact && candidates.length ? 'resolve_concept' : 'not_recorded',
     truncated: [candidates, related, proof, links, sources, legacy, summaries].some(value => value.length > limit),
   };
 }
@@ -497,7 +544,7 @@ export function renderContext(value) {
   }
   if (value.learning) {
     sections.push('## 讲解前检查', `概念 ID：${value.learning.conceptId ?? '尚未确定'}\nalreadyExplained：${value.learning.alreadyExplained}\n建议：${value.learning.guidance}`);
-    if (value.learning.alreadyExplained) sections.push('此概念已有明确讲解记录：默认跳过基础定义与原理复述，只讨论当前应用和新差异。用户主动要求复习或仍不理解时可以重讲。缺少应用证据不是自动重讲的理由。');
+    if (value.learning.alreadyExplained) sections.push('此概念存在讲解历史：对照 explanationSummaries 的 scope，只跳过已覆盖范围；未覆盖的基础内容仍需解释。用户主动要求复习或仍不理解时可以重讲。缺少应用证据不是自动重讲的理由。');
     if (value.learning.needsLegacyReview) sections.push('先核对匹配的旧知识卡。只有原文明确记录已讲解，才能补充 explained 证据；不因缺少新字段重新讲解。');
     sections.push(JSON.stringify(value.learning, null, 2));
   }
@@ -508,13 +555,14 @@ export function renderContext(value) {
 function validateOptions(command, options) {
   if (!COMMANDS.has(command)) fail('USAGE', `不支持的命令：${command}`);
   const allowed = ['home'];
-  if (['init', 'status', 'context', 'record', 'pause', 'resume'].includes(command)) allowed.push('cwd');
+  if (['init', 'status', 'context', 'record', 'pause', 'resume', 'record-user'].includes(command)) allowed.push('cwd');
   if (['status', 'context'].includes(command)) allowed.push('projectId');
   if (['context', 'knowledge'].includes(command)) allowed.push('topic', 'conceptId');
   if (command === 'knowledge') allowed.push('limit', 'depth');
   if (command === 'init') allowed.push('newProject');
   if (command === 'backup') allowed.push('output');
   object(options, allowed, 'USAGE', '命令参数');
+  if (command === 'record-user' && (typeof options.cwd !== 'string' || !path.isAbsolute(options.cwd))) fail('USAGE', 'record-user 必须用 --cwd 指定来源项目的绝对目录。');
   for (const key of ['cwd', 'projectId', 'topic', 'conceptId', 'output']) if (options[key] !== undefined) text(options[key], 'USAGE', key, true);
   if (options.projectId && (!UUID.test(options.projectId) || options.cwd !== undefined)) fail('USAGE', '--project-id 必须是有效 UUID，不能与 --cwd 同时指定。');
   if (options.topic && options.conceptId) fail('USAGE', '--topic 和 --concept-id 只能指定一个。');
@@ -541,10 +589,12 @@ function initialize(options) {
       if (options.newProject && previous && pathKey(previous.path) === pathKey(location.project)) fail('USAGE', '--new-project 用于复制项目，不在原目录重置已有身份。');
       const projectId = options.newProject || !oldId ? randomUUID() : oldId;
       const state = legacy?.state ?? { schemaVersion: 1, revision: 0, mode: 'active', profile: '', projectMap: '', cards: [], decisions: [] };
+      const result = { ...storeLocation(store), ...projectSummary({ id: projectId, legacy_hash: legacy ? hash(legacy.bytes) : null }, location, state), created: true, changed: true };
+      checkResponse(result);
       if (atPath) db.prepare('UPDATE projects SET path_key = NULL WHERE id = ?').run(atPath.id);
       if (projectId !== oldId) writeIdentity(location, projectId);
       db.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?)').run(projectId, location.project, pathKey(location.project), JSON.stringify(state), legacy ? hash(legacy.bytes) : null);
-      return { ...storeLocation(store), ...projectSummary({ id: projectId, legacy_hash: legacy ? hash(legacy.bytes) : null }, location, state), created: true, changed: true };
+      return result;
     });
   });
 }
@@ -558,13 +608,15 @@ async function createBackup(options) {
   try {
     store.db.exec('COMMIT;');
     const output = path.resolve(options.output);
+    const result = { ...storeLocation(store), backupFile: output };
+    checkResponse(result);
     safeParents(path.dirname(output));
     safeEntry(output);
     const fd = fs.openSync(output, 'wx', 0o600);
     fs.closeSync(fd);
     reserved = true;
     await sqliteBackup(store.db, output);
-    return { ...storeLocation(store), backupFile: output };
+    return result;
   } catch (error) {
     if (reserved) fs.unlinkSync(options.output);
     fail('BACKUP_FAILED', `备份失败；不会覆盖已有文件：${error.message}`);
@@ -580,6 +632,7 @@ export function execute(command, options = {}, input) {
     object(input, ['expectedRevision', 'profile'], 'INVALID_INPUT', '用户档案输入');
     revision(input.expectedRevision, 'INVALID_INPUT');
     text(input.profile, 'INVALID_INPUT', 'profile');
+    checkSize(input, LIMITS.patchBytes, '单批记录');
   }
   if (command === 'init') return initialize(options);
   if (command === 'backup') return createBackup(options);
@@ -589,15 +642,6 @@ export function execute(command, options = {}, input) {
     if (command === 'user') return { ...storage, ...userContext(db), initialized: Boolean(db) };
     if (command === 'knowledge') return { ...storage, ...knowledge(db, options) };
     if (command === 'projects') return { ...storage, projects: db ? db.prepare('SELECT * FROM projects ORDER BY path, id').all().map(row => projectSummary(row, null, stateOf(row))) : [] };
-    if (command === 'record-user') {
-      const previous = userContext(db);
-      if (previous.userRevision !== input.expectedRevision) fail('CONFLICT', '用户档案版本已变化；重新读取 user 并整合，不直接替换版本号。');
-      if (previous.userProfile === input.profile) return { ...storage, ...previous, changed: false };
-      if (previous.userRevision === Number.MAX_SAFE_INTEGER) fail('INVALID_STATE', '用户档案版本达到上限；未更新。');
-      saveSnapshot(db, 'user', previous.userRevision, previous);
-      db.prepare('UPDATE user_profile SET revision = ?, profile = ? WHERE id = 1').run(previous.userRevision + 1, input.profile);
-      return { ...storage, ...userContext(db), changed: true };
-    }
     const location = options.projectId ? null : locate(options.cwd);
     const projectId = options.projectId?.toLowerCase() ?? readIdentity(location);
     const row = projectId ? db?.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) : null;
@@ -608,17 +652,27 @@ export function execute(command, options = {}, input) {
     }
     if (location) checkProject(row, location);
     const state = stateOf(row);
+    if (state.mode === 'paused' && ['record', 'record-user'].includes(command)) fail('PAUSED', '来源项目伴学已暂停；用户明确要求恢复后才运行 resume。');
+    if (command === 'record-user') {
+      const previous = userContext(db);
+      if (previous.userRevision !== input.expectedRevision) fail('CONFLICT', '用户档案版本已变化；重新读取 user 并整合，不直接替换版本号。');
+      if (row.path !== location.project) db.prepare('UPDATE projects SET path = ?, path_key = ? WHERE id = ?').run(location.project, pathKey(location.project), projectId);
+      if (previous.userProfile === input.profile) return { ...storage, ...previous, changed: false };
+      if (previous.userRevision === Number.MAX_SAFE_INTEGER) fail('INVALID_STATE', '用户档案版本达到上限；未更新。');
+      saveSnapshot(db, 'user', previous.userRevision, previous);
+      db.prepare('UPDATE user_profile SET revision = ?, profile = ? WHERE id = 1').run(previous.userRevision + 1, input.profile);
+      return { ...storage, ...userContext(db), changed: true };
+    }
     const base = { ...storage, ...projectSummary(row, location, state) };
     if (command === 'status') return { ...base, ...userContext(db), locked: Boolean(location && safeEntry(path.join(location.stateDir, '.lock'))) };
     if (command === 'context') return { ...context(location ?? { project: row.path }, state, options, db), ...base };
-    if (state.mode === 'paused' && command === 'record') fail('PAUSED', '伴学已暂停；用户明确要求恢复后才运行 resume。');
     if (command === 'record' && input.expectedRevision !== state.revision) fail('CONFLICT', `状态版本已变化：预期 ${input.expectedRevision}，当前 ${state.revision}。重新读取 context 并整合，不能直接替换版本号。`);
     const next = { ...state };
     if (command === 'record') {
       for (const key of ['profile', 'projectMap']) if (Object.hasOwn(input, key)) next[key] = input[key];
       for (const key of ['cards', 'decisions']) if (Object.hasOwn(input, key)) next[key] = upsert(state[key], input[key]);
     } else next.mode = command === 'pause' ? 'paused' : 'active';
-    const previousGraph = graphSnapshot(db, projectId, input?.concepts?.map(value => value.id));
+    const previousGraph = graphSnapshot(db, projectId, [...(input?.concepts ?? []).map(value => value.id), ...(input?.removeAliases ?? []).map(value => value.conceptId)]);
     const graphChanged = command === 'record' && addGraph(db, projectId, next, input);
     if (!graphChanged && isDeepStrictEqual(state, next)) {
       if (row.path !== location.project) db.prepare('UPDATE projects SET path = ?, path_key = ? WHERE id = ?').run(location.project, pathKey(location.project), projectId);
@@ -627,13 +681,14 @@ export function execute(command, options = {}, input) {
     if (state.revision === Number.MAX_SAFE_INTEGER) fail('INVALID_STATE', '写入版本达到整数上限；未更新。');
     next.revision += 1;
     validateState(next);
+    checkSize(next, Math.max(LIMITS.stateBytes, Buffer.byteLength(JSON.stringify({ ...state, revision: next.revision }), 'utf8')), '项目记录');
     saveSnapshot(db, `project:${projectId}`, state.revision, { state, ...previousGraph });
     db.prepare('UPDATE projects SET state = ?, path = ?, path_key = ? WHERE id = ?').run(JSON.stringify(next), location.project, pathKey(location.project), projectId);
     return { ...storage, ...projectSummary(row, location, next), changed: true, snapshotRevision: state.revision };
   });
 }
 
-const HELP = `VibeMind — 本地 SQLite 学习记忆\n\n用法：node vibemind.mjs <命令> [参数]\n\n  init          初始化身份、导入旧 JSON；复制冲突时 --new-project\n  status        查看项目状态\n  context       查看上下文；--topic 关键词或 --concept-id 明确概念\n  record        stdin JSON 更新项目，必须带 expectedRevision\n  pause/resume  暂停/恢复当前项目\n  user          查看全局用户档案及 userRevision\n  record-user   stdin JSON 更新用户档案：expectedRevision、profile\n  projects      列出数据库项目\n  knowledge     --topic 或 --concept-id 查询图谱；--limit 1..100、--depth 1..2\n  backup        --output 绝对路径，SQLite 在线备份，不覆盖文件\n\n项目命令支持 --cwd；status/context 可改用 --project-id 读取历史。\ncontext 默认 Markdown；--json 及其他命令输出 JSON。\nVIBEMIND_HOME 必须是绝对目录，默认 ~/.vibemind。读取不创建记录。\nNode.js 22.20+；stdout 只输出结果，错误和运行时警告输出 stderr。\n`;
+const HELP = `VibeMind — 本地 SQLite 学习记忆\n\n用法：node vibemind.mjs <命令> [参数]\n\n  init          初始化身份、导入旧 JSON；复制冲突时 --new-project\n  status        查看项目状态\n  context       查看上下文；--topic 关键词或 --concept-id 明确概念\n  record        stdin JSON 更新项目，必须带 expectedRevision；retractEvidence/removeAliases 显式纠错\n  pause/resume  暂停/恢复当前项目\n  user          查看全局用户档案及 userRevision\n  record-user   --cwd 来源项目绝对路径；stdin JSON：expectedRevision、profile，暂停来源拒绝写入\n  projects      列出数据库项目\n  knowledge     --topic 或 --concept-id 查询图谱；--limit 1..100、--depth 1..2\n  backup        --output 绝对路径，SQLite 在线备份，不覆盖文件\n\n项目命令支持 --cwd；status/context 可改用 --project-id 读取历史。\ncontext 默认 Markdown；--json 及其他命令输出 JSON。\n新字符串最多128 KiB，输入及项目状态JSON最多512 KiB；MCP业务响应最多2 MiB。\n旧大记录可通过CLI读取和缩减，未完成决定不截断；已解释仅跳过scope覆盖范围。\nVIBEMIND_HOME 必须是绝对目录，默认 ~/.vibemind。读取不创建记录。\nNode.js 22.20+；stdout 只输出结果，错误和运行时警告输出 stderr。\n`;
 
 export async function main(argv = process.argv.slice(2)) {
   try {

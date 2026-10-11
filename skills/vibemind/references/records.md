@@ -14,20 +14,20 @@
 | `record --cwd ...` | `vibemind_record` | 更新当前项目；CLI 从 UTF-8 stdin 接收 JSON，MCP 另带 `projectPath` |
 | `pause/resume --cwd ...` | `vibemind_pause` / `vibemind_resume` | 暂停/用户要求时恢复当前项目 |
 | `user` | `vibemind_user` | 通用用户档案和独立 `userRevision` |
-| `record-user` | `vibemind_record_user` | `expectedRevision`（刚读取的 userRevision）和 `profile` |
+| `record-user --cwd ...` | `vibemind_record_user` | 来源 `projectPath`（CLI 用绝对 `--cwd`）、`expectedRevision`（刚读取的 userRevision）和 `profile`；暂停来源拒绝写入 |
 | `projects` | `vibemind_projects` | 项目 ID 列表，目录删除后记录仍保留 |
 | `knowledge --topic ...` | `vibemind_knowledge` | 跨项目图谱、解释与应用证据及来源 |
 | `backup --output ...` | `vibemind_backup` | SQLite 在线备份，目的文件必须是不存在的绝对路径 |
 
 MCP 项目路径必须绝对；status/context 可用 `projectId` 替代路径，CLI 对应 `--project-id`，不能同时指定路径与 ID。只有读取可以按 ID 脱离现有目录；项目写入必须校验真实目录和身份。
 
-context 默认 Markdown，`--json` 和其他 CLI 命令输出 JSON；成功 `ok: true`。错误 JSON 写到 stderr 并返回 1，Node 22 的 SQLite 运行时警告也可能出现在 stderr。MCP 返回 `structuredContent`，失败为 `isError: true`，保留中文 `error.code/message`。只有成功结果才能报告保存。
+CLI context 默认 Markdown，`--json` 和其他 CLI 命令输出 JSON；成功 `ok: true`。错误 JSON 写到 stderr 并返回 1，Node 22 的 SQLite 运行时警告也可能出现在 stderr。MCP 返回完整 `structuredContent` 和兼容的紧凑 JSON 文本；执行错误为 `isError: true`，保留中文 `error.code/message`，输入 schema 错误由 SDK 返回。只有成功结果才能报告保存。
 
 ## 讲解前检查
 
 **每次讲解之前都查询，不仅在用户要求回顾时查询。** MCP 使用 `conceptId`（已确定 ID）或 `topic`（关键词/明确别名），CLI 使用 `--concept-id` 或 `--topic`，两者不能同时指定。context 中结果位于 `learning`，knowledge 直接返回结果。
 
-- `alreadyExplained: true`、`guidance: skip_basics`：已存在当前精确概念的 explained 证据，跳过基础定义、原理及原例子，只讨论当前应用和新差异。用户主动复习、重讲或仍不理解时可再讲。
+- `alreadyExplained: true`、`guidance: skip_covered_scope`：当前精确概念存在 explained 历史，不代表整个概念都讲过。对照 `explanationSummaries.scope` 与当前需求，只跳过已覆盖范围；未覆盖的基础内容仍需解释，未知范围不能自动判为已覆盖。用户主动复习、重讲或仍不理解时可再讲。
 - `conceptId: null`、`guidance: resolve_concept`：只找到候选，先确定目标概念；模糊匹配不能当作已解释，相关概念状态不能覆盖当前概念或其子概念。
 - `needsLegacyReview: true`、`guidance: review_legacy`：读取 `legacyCards` 原文及范围，明确记录讲解事实才补 explained 证据，不因旧格式缺字段重讲。不明确的记录保持未知；暂停项目不补写。
 - `explanationSummaries` 提供精确概念的既往讲解范围、摘要、来源项目/卡片和代码位置；`evidence` 区分 explained 与 applied。没有 applied 证据不是重讲理由，也不能把 AI 解释当作用户掌握。
@@ -47,8 +47,12 @@ knowledge 支持 `--limit 1..100`（默认 20）、`--depth 1..2`（默认 2）�
 | `concepts` | `id`、`title`、可选字符串数组 `aliases`；复用已有 ID/标题，新别名追加，不自动合并相似概念 |
 | `links` | `cardId`、`conceptId`；连接当前项目知识卡和全局概念，按关联去重 |
 | `evidence` | `id`、`conceptId`、`cardId`、`kind`（explained/applied）、`scope`（范围）、`summary`、可选 `codeLocation` |
+| `retractEvidence` | 证据 ID 字符串数组；显式撤销当前项目的错误证据，取消其解释/应用判定，保留旧快照及卡片关联；不存在的 ID 无变化 |
+| `removeAliases` | `conceptId`、`alias`；显式删除该概念的额外别名，旧归属保留在快照；概念 ID 和标题的定位别名不可删除 |
 
 证据必须引用当前项目已有卡片及已声明概念，record 同批新增的卡片/概念也可引用；自动建立卡片关联。证据 ID 的种类、概念和来源卡片不可更换，新观察用新 ID；摘要/范围/代码定位可以整合真实信息。创建时间由 CLI 保存，同一内容重复提交不改变时间或 revision。
+
+更正后的证据使用新 ID，同批不能撤销并重写同一证据 ID，后续提交也不能重用已撤销的 ID。别名按规范化后的值去重；不能同批删除又加入同一概念的同一别名。可以先通过 `removeAliases` 指明旧归属，再在同批 `concepts` 中绑定到正确概念；归属已被其他写入更改时返回 CONCEPT_CONFLICT，不删除新绑定。撤销、图谱更正、项目 revision 和旧快照在同一事务提交，错误完整回滚。
 
 下面仅是格式示例；只有实际讲解发出后才能填写 explained，不能照抄成当前项目事实或提前保存计划。
 
@@ -73,7 +77,15 @@ knowledge 支持 `--limit 1..100`（默认 20）、`--depth 1..2`（默认 2）�
 }
 ```
 
-通用偏好通过 record-user 单独提交，先读取 userRevision，整合旧档案；不自动复制项目专属观察。解释和应用证据保留来源，通过全局概念跨项目查询，不需要把项目卡片复制到用户档案中。
+通用偏好通过 record-user 单独提交，先读取 userRevision，整合旧档案；必须提供已初始化来源项目的绝对路径。来源的身份、复制冲突、旧文件变更和暂停状态均在同一事务校验，暂停来源连相同内容的提交也拒绝；其他活跃项目仍能更新全局档案。用户 revision 与项目 revision 独立，不自动复制项目专属观察。解释和应用证据保留来源，通过全局概念跨项目查询，不需要把项目卡片复制到用户档案中。
+
+## 容量与按需读取
+
+保存简短学习摘要，限制按 UTF-8 字节计算：单个新字符串最多 128 KiB，单批输入 JSON 最多 512 KiB，项目状态 JSON 最多 512 KiB（不含图谱和历史快照），MCP 序列化业务结果最多 2 MiB。批输入和结果按 JSON 转义后的实际字节校验，不能用字符数替代。
+
+写入结果在数据库提交前检查；容量错误会回滚修订、图谱和快照，初始化也在替换身份前检查响应。MCP 使用紧凑文本并为协议外壳留余量，不会出现大输入已保存却因重复大响应断线的情况。只读结果过大时明确返回 RESPONSE_TOO_LARGE，连接仍可继续使用。
+
+默认 context 只返回卡片目录，正文按 topic/conceptId 或 knowledge 查询；可减少 knowledge.limit。全部未完成决定始终一起恢复，绝不静默截断。旧的大记录仍可通过 CLI 读取或完整备份；旧的超限项目状态允许保持或缩减内容，不允许继续增长。过大的未完成决定导致写操作响应超限时，操作不提交，先用 CLI 读取并整合缩短决定正文。旧用户档案可以更新为合法短摘要，旧内容留在快照。
 
 ## 迁移、身份和保护
 
@@ -85,7 +97,7 @@ knowledge 支持 `--limit 1..100`（默认 20）、`--depth 1..2`（默认 2）�
 
 项目/用户各有独立 revision。SQLite DELETE 回滚日志、FULL 同步、3 秒锁等待，版本检查、图谱更新、上一版快照在同一事务内；错误回滚。快照保存在 snapshots 表，完整数据库的独立备份走 backup 命令，不能用文件复制代替活动数据库备份。备份恢复需停止所有宿主进程、保留现有数据库并校验备份；没有自动恢复写回/重置命令。
 
-MCP 配置和 Skill 安装不自动启用项目。所有旧安装应升级，旧 CLI 仍写项目 JSON，不能与新版本混用。建议把 `.vibemind/` 加入项目 .gitignore；不代用户改忽略规则，不直接编辑活动数据库或身份文件。
+MCP 配置和 Skill 安装不自动启用项目。Skill、CLI 和 MCP 应一起升级至 0.3.0：record-user 新增必填来源路径，讲解建议改为 skip_covered_scope；SQLite schema 不变。0.1.0 CLI 仍写项目 JSON，不能与新版本混用。建议把 `.vibemind/` 加入项目 .gitignore；不代用户改忽略规则，不直接编辑活动数据库或身份文件。
 
 ## 错误处理
 
@@ -101,6 +113,8 @@ MCP 配置和 Skill 安装不自动启用项目。所有旧安装应升级，旧
 | CONCEPT_CONFLICT | 查询原概念/别名绑定并复用；不同概念选择不同稳定 ID |
 | UNSAFE_PATH | 报告路径问题，不跟随链接或借用父记录 |
 | INVALID_INPUT / USAGE | 修正参数、来源引用、编码或记录，不扩大范围 |
+| INPUT_TOO_LARGE | 缩短新写入摘要或分批提交；项目累计状态也有限额，不能用分批绕过 |
+| RESPONSE_TOO_LARGE | 减少 knowledge.limit 或用 CLI 读取完整历史；写操作未提交，未完成决定未被截断 |
 | BACKUP_FAILED / WRITE_FAILED | 原数据保留，排除文件系统问题后重读再试 |
 | LOCK_RELEASE_FAILED | 操作可能已保存，先 status 核实，不能盲目重复 |
 

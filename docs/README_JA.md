@@ -33,7 +33,7 @@ VibeMind は、Vibe Coding の開発フローに適応型のプログラミン�
 
 現在の AI ツールとモデルをそのまま使えます。MCP と CLI は `~/.vibemind/memory.sqlite` を共有し、プロジェクトには `.vibemind/project.json` の識別情報だけを保存します。設定と説明履歴はプロジェクトをまたいで利用できます。追加のアカウントやモデル API は不要で、stdio プロセスは宿主が管理します。
 
-説明前に正確な概念 ID または明示的な別名で履歴を確認します。説明済みなら基本原理を繰り返さず、今回の応用と差分を扱います。応用の証拠がなくても自動で再説明しません。復習や再説明を明示的に求められた場合は説明できます。類似候補や親概念の履歴は対象概念の説明済み判定に使いません。
+説明前に正確な概念 ID または明示的な別名で履歴を確認します。`alreadyExplained` は説明履歴の存在を表します。`explanationSummaries.scope` と今回の要件を比較し、既に扱った範囲だけを省き、未説明の基礎は説明します。応用の証拠がなくても自動で再説明しません。復習や再説明を明示的に求められた場合は説明できます。類似候補や親概念の履歴は対象概念の説明済み判定に使いません。
 
 ## ガイドの進め方
 
@@ -90,7 +90,7 @@ npx skills add TFboy1/VibeMind --skill vibemind --agent trae --copy
 
 #### 完全な ZIP をインポートする
 
-1. 現在の 0.2.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
+1. 現在の 0.3.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
 2. WorkBuddy の「Skills → Skill の追加 → アップロード」から ZIP をインポートします。Qoder や TRAE の対応するインポート画面でも同じ ZIP を利用できます。
 3. 対象プロジェクトで `vibemind` を選択して呼び出します。
 
@@ -153,7 +153,7 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 読み取りは記録を変更しません。`context` は通常 Markdown を出力し、`--json` を加えると JSON を返します。その他のコマンドは JSON を出力します。エラーは stderr に出力され、終了コードは 0 以外になります。
 
-`record` は標準入力の JSON を読みます。現在の `expectedRevision` と、`profile`、`projectMap`、`cards`、`decisions` のうち少なくとも一つが必要です。カードは固定の `id`、`title`、`content` を持ち、判断には `stage` も含めます。
+`record` は標準入力の JSON を読みます。現在の `expectedRevision` と、`profile`、`projectMap`、`cards`、`decisions`、グラフ記録、明示的な訂正などの更新項目が少なくとも一つ必要です。カードは固定の `id`、`title`、`content` を持ち、判断には `stage` も含めます。
 
 | stage | 意味 |
 |---|---|
@@ -168,7 +168,9 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 活動データはユーザー側の SQLite です。ユーザーとプロジェクトの revision は独立し、更新とスナップショットを同じトランザクションで保存します。DELETE ジャーナル、FULL 同期、最大 3 秒のロック待機を使用します。init は有効な旧 state.json を、元のバイト列、バックアップ、停止状態、未完了判断を保持したまま移行します。旧 profile はプロジェクトの観察として保持し、旧カードは説明の事実を確認してから explained 証拠を補います。
 
-移動は ID で継続します。元の登録先が存在する複製 ID は拒否し、明示的な init --new-project で独立した空の記録を作ります。ディレクトリ削除後も projects と context --project-id で履歴を読めます。user/record-user は通用設定、knowledge は正確な説明状態と最大 2 ホップの関連、backup --output は上書きしない SQLite オンラインバックアップです。[記録仕様](../skills/vibemind/references/records.md)
+移動は ID で継続します。元の登録先が同じ ID を保持する複製だけを拒否し、無関係なディレクトリによる旧パスの再利用は復元を妨げません。明示的な init --new-project で独立した空の記録を作ります。ディレクトリ削除後も projects と context --project-id で履歴を読めます。user/record-user は共通設定で、更新には初期化済みの有効な出所プロジェクト（CLI の --cwd、MCP の projectPath）が必須です。knowledge は正確な説明履歴と最大 2 ホップの関連、backup --output は上書きしない SQLite オンラインバックアップです。[記録仕様](../skills/vibemind/references/records.md)
+
+誤記の明示的な訂正には record.retractEvidence（出所プロジェクトの証拠 ID）または record.removeAliases（conceptId と alias）を使い、旧内容はスナップショットに保持します。短い要約を保存し、UTF-8 バイト数で新規文字列は 128 KiB、入力 JSON とプロジェクト状態は 512 KiB、MCP の結果は 2 MiB までです。上限超過の更新はコミット前にロールバックし、未完了判断は切り捨てません。旧大容量記録は CLI で読んで縮小できます。Skill、CLI、MCP を一緒に 0.3.0 へ更新してください。record-user は出所パスが必須となり、guidance は skip_covered_scope に変わります。SQLite スキーマは変更しません。
 
 Git と worktree の境界を越えて別プロジェクトの状態を読まず、状態パスのシンボリックリンクも拒否します。長い記録の後ろにある未完了の判断もすべて復元します。
 

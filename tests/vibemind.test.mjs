@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { execute, locate, renderContext } from '../skills/vibemind/scripts/vibemind.mjs';
+import { execute, LIMITS, locate, renderContext } from '../skills/vibemind/scripts/vibemind.mjs';
 
 const script = fileURLToPath(new URL('../skills/vibemind/scripts/vibemind.mjs', import.meta.url));
 const empty = { schemaVersion: 1, revision: 0, mode: 'active', profile: '', projectMap: '', cards: [], decisions: [] };
@@ -31,7 +31,7 @@ function fixture(t) {
     return cwd;
   };
   const a = makeProject('中文 项目 A'), b = makeProject('项目 B');
-  const call = (command, input, options = {}) => execute(command, { home, ...(['init', 'status', 'context', 'record', 'pause', 'resume'].includes(command) && !options.projectId ? { cwd: a } : {}), ...options }, input);
+  const call = (command, input, options = {}) => execute(command, { home, ...(['init', 'status', 'context', 'record', 'pause', 'resume', 'record-user'].includes(command) && !options.projectId ? { cwd: a } : {}), ...options }, input);
   const rows = sql => {
     const db = new DatabaseSync(path.join(home, 'memory.sqlite'), { readOnly: true });
     try { return db.prepare(sql).all().map(value => ({ ...value })); } finally { db.close(); }
@@ -102,18 +102,20 @@ test('用户档案共享，项目观察、卡片和决定隔离，revision 独�
   assert.equal(b.pendingDecisions.length, 0); assert.equal(b.cardIndex.length, 0);
   rejects(() => f.call('record-user', { expectedRevision: 0, profile: '旧档案' }), 'CONFLICT');
 });
-test('A 解释后 B 按别名跳过基础解释，无应用证据仍不重讲', t => {
+test('A 局部解释后 B 按别名只跳过已覆盖范围，无应用证据仍不重讲', t => {
   const f = fixture(t), a = f.call('init');
   f.call('record', { expectedRevision: 0, ...explanation });
   f.call('init', undefined, { cwd: f.b });
   const b = f.call('context', undefined, { cwd: f.b, topic: 'CORS' });
-  assert.equal(b.learning.alreadyExplained, true); assert.equal(b.learning.guidance, 'skip_basics');
+  assert.equal(b.learning.alreadyExplained, true); assert.equal(b.learning.guidance, 'skip_covered_scope');
   assert.equal(b.learning.conceptId, 'cors');
   assert.equal(b.learning.explanationSummaries[0].projectId, a.projectId);
   assert.equal(b.learning.explanationSummaries[0].codeLocation, 'api/main.py:12');
+  assert.equal(b.learning.explanationSummaries[0].scope, explanation.evidence[0].scope);
   assert.ok(!b.learning.evidence.some(value => value.kind === 'applied'));
   assert.match(renderContext(b), /缺少应用证据不是自动重讲/);
   assert.match(renderContext(b), /用户主动要求复习/);
+  assert.match(renderContext(b), /只跳过已覆盖范围；未覆盖的基础内容仍需解释/);
   assert.equal(ok(run(f, 'knowledge', undefined, ['--topic', '跨域'])).alreadyExplained, true);
 });
 test('候选与子概念不误跳过；应用与解释证据互不覆盖', t => {
@@ -129,6 +131,45 @@ test('候选与子概念不误跳过；应用与解释证据互不覆盖', t => 
   f.call('record', { expectedRevision: 1, evidence: [{ ...explanation.evidence[0], id: 'cors-applied', kind: 'applied', summary: '用户独立修正来源并说明原因。' }] });
   assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).evidence.length, 2);
   assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
+});
+test('显式撤销只影响来源项目，保留应用证据及快照，全部解释撤销后可重新讲解', t => {
+  const f = fixture(t), a = f.call('init'); f.call('init', undefined, { cwd: f.b });
+  f.call('record', { expectedRevision: 0, ...explanation, evidence: [...explanation.evidence, { ...explanation.evidence[0], id: 'cors-applied', kind: 'applied' }] });
+  f.call('record', { expectedRevision: 0, ...explanation }, { cwd: f.b });
+  const before = disk(f.root);
+  rejects(() => f.call('record', { expectedRevision: 1, retractEvidence: ['cors-explained'], evidence: explanation.evidence }), 'INVALID_INPUT');
+  rejects(() => f.call('record', { expectedRevision: 0, retractEvidence: ['cors-explained'] }), 'CONFLICT');
+  assert.deepEqual(disk(f.root), before);
+  assert.equal(f.call('record', { expectedRevision: 1, retractEvidence: ['cors-explained'] }).revision, 2);
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
+  f.call('record', { expectedRevision: 1, retractEvidence: ['cors-explained'] }, { cwd: f.b });
+  const knowledge = f.call('knowledge', undefined, { conceptId: 'cors' });
+  assert.equal(knowledge.alreadyExplained, false); assert.equal(knowledge.guidance, 'not_recorded');
+  assert.deepEqual(knowledge.evidence.map(value => value.kind), ['applied']);
+  assert.equal(knowledge.links.length, 2);
+  const snapshot = f.rows('SELECT * FROM snapshots').find(value => value.scope === `project:${a.projectId}` && value.revision === 1);
+  assert.equal(JSON.parse(snapshot.content).evidence.length, 2);
+  assert.equal(f.call('record', { expectedRevision: 2, retractEvidence: ['cors-explained'] }).changed, false);
+  rejects(() => f.call('record', { expectedRevision: 2, evidence: explanation.evidence }), 'INVALID_INPUT');
+  f.call('record', { expectedRevision: 2, evidence: [{ ...explanation.evidence[0], id: 'cors-corrected' }] });
+  assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
+});
+test('未关联概念也可显式纠正别名，旧归属进快照，冲突和后续错误完整回滚', t => {
+  const f = fixture(t); f.call('init'); const b = f.call('init', undefined, { cwd: f.b });
+  f.call('record', { expectedRevision: 0, ...explanation, concepts: [{ ...explanation.concepts[0], aliases: ['跨源配置'] }] });
+  const correction = { removeAliases: [{ conceptId: 'cors', alias: ' 跨源配置 ' }], concepts: [{ id: 'cors-origin', title: '允许来源配置', aliases: ['跨源配置'] }] };
+  f.call('record', { expectedRevision: 0, ...correction }, { cwd: f.b });
+  assert.equal(f.call('knowledge', undefined, { topic: '跨源配置' }).conceptId, 'cors-origin');
+  const snapshot = f.rows('SELECT * FROM snapshots').find(value => value.scope === `project:${b.projectId}` && value.revision === 0);
+  assert.ok(JSON.parse(snapshot.content).concepts.find(value => value.id === 'cors').aliases.includes('跨源配置'));
+  const before = disk(f.root);
+  rejects(() => f.call('record', { expectedRevision: 1, ...correction }, { cwd: f.b }), 'CONCEPT_CONFLICT');
+  rejects(() => f.call('record', { expectedRevision: 1, removeAliases: [{ conceptId: 'cors', alias: 'CORS' }] }), 'INVALID_INPUT');
+  rejects(() => f.call('record', { expectedRevision: 1, ...correction, concepts: [{ ...explanation.concepts[0], aliases: ['跨源配置'] }] }), 'INVALID_INPUT');
+  rejects(() => f.call('record', { expectedRevision: 1, removeAliases: [{ conceptId: 'cors', alias: ' 跨域 ' }, { conceptId: 'cors', alias: '跨域' }] }), 'INVALID_INPUT');
+  rejects(() => f.call('record', { expectedRevision: 1, removeAliases: [{ conceptId: 'cors-origin', alias: '跨源配置' }], links: [{ cardId: 'missing', conceptId: 'cors-origin' }] }, { cwd: f.b }), 'INVALID_INPUT');
+  assert.deepEqual(disk(f.root), before);
+  assert.equal(f.call('record', { expectedRevision: 1, removeAliases: [{ conceptId: 'cors', alias: '不存在的别名' }] }).changed, false);
 });
 test('两跳查询有边界，循环、上限及截断可处理', t => {
   const f = fixture(t); f.call('init');
@@ -163,6 +204,66 @@ test('暂停拒绝学习写入，恢复保留解释与待授权决定', t => {
   assert.deepEqual(disk(f.root), before);
   assert.equal(f.call('resume').pendingDecisions[0].stage, 'implementation');
   assert.equal(f.call('knowledge', undefined, { conceptId: 'cors' }).alreadyExplained, true);
+});
+test('通用档案必须标明活跃来源，暂停来源连相同内容也拒绝，其他项目继续写入', t => {
+  const f = fixture(t); f.call('init'); f.call('init', undefined, { cwd: f.b });
+  rejects(() => execute('record-user', { home: f.home }, { expectedRevision: 0, profile: '来源未知' }), 'USAGE');
+  f.call('record-user', { expectedRevision: 0, profile: '使用中文' }); f.call('pause');
+  const before = disk(f.root);
+  for (const profile of ['使用中文', '暂停后不能新增']) rejects(() => f.call('record-user', { expectedRevision: 1, profile }), 'PAUSED');
+  assert.deepEqual(disk(f.root), before);
+  f.call('record-user', { expectedRevision: 1, profile: '使用中文；短摘要' }, { cwd: f.b });
+  assert.equal(f.call('user').userRevision, 2); assert.equal(f.call('status').mode, 'paused');
+  assert.equal(f.call('status', undefined, { cwd: f.b }).revision, 0);
+  assert.equal(ok(run(f, 'record-user', { expectedRevision: 2, profile: 'CLI 来源验证' }, ['--cwd', f.b])).userRevision, 3);
+});
+test('新写入按 UTF-8 和 JSON 转义字节限额拒绝，旧大档案仍可缩短并留快照', t => {
+  const f = fixture(t); f.call('init');
+  const before = disk(f.root);
+  for (const profile of ['中'.repeat(Math.floor(LIMITS.textBytes / 3) + 1), '\0'.repeat(LIMITS.textBytes)]) {
+    rejects(() => f.call('record-user', { expectedRevision: 0, profile }), 'INPUT_TOO_LARGE');
+  }
+  assert.deepEqual(disk(f.root), before);
+  const oldProfile = '历史'.repeat(LIMITS.textBytes);
+  const db = new DatabaseSync(path.join(f.home, 'memory.sqlite'));
+  try { db.prepare('UPDATE user_profile SET revision = 7, profile = ? WHERE id = 1').run(oldProfile); } finally { db.close(); }
+  assert.equal(f.call('user').userProfile, oldProfile);
+  assert.equal(f.call('record-user', { expectedRevision: 7, profile: '保留有效偏好摘要' }).userRevision, 8);
+  assert.equal(JSON.parse(f.rows("SELECT content FROM snapshots WHERE scope = 'user'")[0].content).userProfile, oldProfile);
+});
+test('多批合法写入不能突破项目容量，超限时概念、修订和快照一起回滚', t => {
+  const f = fixture(t); f.call('init');
+  for (let n = 0; n < 3; n++) f.call('record', { expectedRevision: n, cards: [{ id: `card-${n}`, title: '案例', content: 'x'.repeat(LIMITS.textBytes) }] });
+  const before = disk(f.root);
+  rejects(() => f.call('record', { expectedRevision: 3, cards: [{ id: 'card-3', title: '新增', content: 'x'.repeat(LIMITS.textBytes) }], concepts: [{ id: 'rollback', title: '不得保留' }] }), 'INPUT_TOO_LARGE');
+  assert.deepEqual(disk(f.root), before); assert.equal(f.call('status').revision, 3);
+  assert.equal(f.rows('SELECT * FROM concepts').length, 0);
+  assert.equal(f.call('record', { expectedRevision: 3, cards: [{ id: 'card-3', title: '新增', content: '简短摘要' }] }).revision, 4);
+});
+test('旧大项目允许缩减，超大未完成决定的写入响应在提交前拒绝且完整历史可读', t => {
+  const f = fixture(t), dir = path.join(f.a, '.vibemind'); fs.mkdirSync(dir);
+  const legacy = { ...empty, projectMap: 'x'.repeat(LIMITS.stateBytes + 1000) };
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(legacy), 'utf8'); f.call('init');
+  assert.equal(f.call('context').projectMap, legacy.projectMap);
+  rejects(() => f.call('record', { expectedRevision: 0, profile: '不能增加容量' }), 'INPUT_TOO_LARGE');
+  f.call('record', { expectedRevision: 0, projectMap: '已缩减的项目地图' });
+  const oversized = { ...empty, revision: 2, decisions: [{ ...decision, content: 'x'.repeat(LIMITS.responseBytes) }] };
+  const db = new DatabaseSync(path.join(f.home, 'memory.sqlite'));
+  try { db.prepare('UPDATE projects SET state = ?').run(JSON.stringify(oversized)); } finally { db.close(); }
+  const before = disk(f.root);
+  rejects(() => f.call('pause'), 'RESPONSE_TOO_LARGE');
+  assert.deepEqual(disk(f.root), before);
+  assert.equal(f.call('context').mode, 'active');
+  assert.equal(f.call('context').pendingDecisions[0].content.length, LIMITS.responseBytes);
+});
+test('旧记录初始化响应超限时身份不被写入，旧文件和未完成决定保留', t => {
+  const f = fixture(t), dir = path.join(f.a, '.vibemind'); fs.mkdirSync(dir);
+  const bytes = JSON.stringify({ ...empty, decisions: [{ ...decision, content: 'x'.repeat(LIMITS.responseBytes) }] });
+  fs.writeFileSync(path.join(dir, 'state.json'), bytes, 'utf8');
+  rejects(() => f.call('init'), 'RESPONSE_TOO_LARGE');
+  assert.deepEqual(fs.readdirSync(dir), ['state.json']);
+  assert.equal(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'), bytes);
+  assert.deepEqual(f.call('projects').projects, []);
 });
 test('失败事务回滚概念、证据、项目及快照，非法输入无变更', t => {
   const f = fixture(t); f.call('init'); f.call('record', { expectedRevision: 0, ...explanation });
@@ -216,6 +317,15 @@ test('移动接续、复制需新身份；删除目录仍按 ID 查看历史', t
   assert.equal(f.call('context', undefined, { projectId: initial.projectId }).cardIndex.length, 1);
   rejects(() => f.call('record', { expectedRevision: 1, profile: '非法目标' }, { projectId: initial.projectId }), 'USAGE');
 });
+test('移动后的旧路径被无关目录和不同项目复用时仍按原身份接续', t => {
+  const f = fixture(t), initial = f.call('init'); f.call('record', { expectedRevision: 0, ...explanation });
+  const moved = path.join(f.root, '移动后的项目'); fs.renameSync(f.a, moved); fs.mkdirSync(f.a);
+  for (const command of ['status', 'context']) assert.equal(f.call(command, undefined, { cwd: moved }).revision, 1);
+  const other = f.call('init', undefined, { newProject: true }); assert.notEqual(other.projectId, initial.projectId);
+  assert.equal(f.call('init', undefined, { cwd: moved }).projectId, initial.projectId);
+  assert.equal(f.call('context', undefined, { cwd: moved }).learning, undefined);
+  assert.equal(f.call('context', undefined, { cwd: moved, topic: 'CORS' }).learning.alreadyExplained, true);
+});
 test('源码子目录恢复；嵌套 Git、worktree、更近半初始化目录隔离', t => {
   const f = fixture(t); f.call('init');
   const source = path.join(f.a, 'src', 'api'); fs.mkdirSync(source, { recursive: true });
@@ -234,7 +344,7 @@ test('符号链接目录和损坏数据库拒绝访问，外部数据不变', t 
   fs.symlinkSync(outside, f.home, 'junction'); rejects(() => f.call('user'), 'UNSAFE_PATH');
   assert.deepEqual(fs.readdirSync(outside), ['sentinel']);
   const badHome = path.join(f.root, 'bad-db'); fs.mkdirSync(badHome); fs.writeFileSync(path.join(badHome, 'memory.sqlite'), '损坏数据库', 'utf8');
-  rejects(() => execute('record-user', { home: badHome }, { expectedRevision: 0, profile: '不能重置' }), 'INVALID_DATABASE');
+  rejects(() => execute('record-user', { home: badHome, cwd: f.b }, { expectedRevision: 0, profile: '不能重置' }), 'INVALID_DATABASE');
   assert.equal(fs.readFileSync(path.join(badHome, 'memory.sqlite'), 'utf8'), '损坏数据库');
 });
 test('身份原子替换失败和初始化锁不能绕过，失败可重试', t => {

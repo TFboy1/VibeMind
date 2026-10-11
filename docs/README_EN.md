@@ -33,7 +33,7 @@ VibeMind brings adaptive coding guidance into day-to-day AI development. Its Ski
 
 Use your existing model and tools. MCP and CLI share `~/.vibemind/memory.sqlite`; each project only keeps `.vibemind/project.json` for identity. Preferences and explanation history work across projects. No extra account or model API is required; the host manages the stdio process.
 
-Before explaining a concept, query its exact ID or an explicit alias. An already explained concept skips the basics by default, even without application evidence. Explicit review requests or continued confusion allow another explanation. Related concepts and fuzzy candidates do not imply that the current concept was explained.
+Before explaining a concept, query its exact ID or an explicit alias. `alreadyExplained` means that explanation history exists: compare `explanationSummaries.scope` and skip only the covered content. Uncovered fundamentals still need an explanation; missing application evidence does not trigger repetition. Explicit review requests or continued confusion allow another explanation. Related concepts and fuzzy candidates do not imply that the current concept was explained.
 
 ## How guidance works
 
@@ -93,7 +93,7 @@ Installation is project-scoped by default. `--copy` uses regular files, which is
 
 #### Import the complete ZIP
 
-1. Build the complete 0.2.0 Skill ZIP from current source; see the [main README](../README.md). The old 0.1.0 ZIP writes project JSON and must be upgraded before using the new MCP.
+1. Build the complete 0.3.0 Skill ZIP from current source; see the [main README](../README.md). The old 0.1.0 ZIP writes project JSON and must be upgraded before using the new MCP.
 2. In WorkBuddy, open Skills → Add skill → Upload skill and import it. Qoder and TRAE can use the same ZIP through their native import UI.
 3. Find `vibemind` and invoke it in your target project.
 
@@ -156,7 +156,7 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 Read commands do not write records. `context` produces Markdown by default; add `--json` for JSON. Other commands return JSON. Errors go to stderr with a nonzero exit code.
 
-`record` reads JSON from stdin. It requires the current `expectedRevision` and at least one update field: `profile`, `projectMap`, `cards` or `decisions`. Cards have stable `id`, `title` and `content`; decisions also have `stage`.
+`record` reads JSON from stdin. It requires the current `expectedRevision` and at least one update field, such as `profile`, `projectMap`, `cards`, `decisions`, graph records or an explicit correction. Cards have stable `id`, `title` and `content`; decisions also have `stage`.
 
 | Decision stage | Meaning |
 |---|---|
@@ -171,7 +171,9 @@ Cards and decisions are upserted by ID. Other records are preserved. Profile and
 
 SQLite is the active source of truth. User and project revisions are independent; updates and snapshots commit in one transaction, using DELETE journaling, FULL synchronization and a three-second busy timeout. `init` imports valid legacy state.json without changing its bytes, backups, paused mode or pending decisions. Legacy profiles remain project observations; legacy cards need review before creating explained evidence.
 
-Moved projects reconnect by ID. A copied ID whose original registered directory still exists is rejected; explicit `init --new-project` starts separate empty project records. Global learning history remains shared. Use `projects` and `context --project-id` to read history after directory deletion. `user`/`record-user` manage the independent user profile; `knowledge --concept-id` returns exact explanation status and up to two hops of related evidence. `backup --output` uses the SQLite online backup API and never overwrites a destination. See the [record contract](../skills/vibemind/references/records.md) for concepts, aliases, links and explained/applied evidence.
+Moved projects reconnect by ID. A copied ID is rejected if the original registered directory still holds the same identity; unrelated reuse of the old path does not block restoration. Explicit `init --new-project` starts separate empty project records. Global learning history remains shared. Use `projects` and `context --project-id` to read history after directory deletion. `user`/`record-user` manage the independent user profile; writes require an initialized, active source project (`--cwd` in CLI, `projectPath` in MCP). `knowledge --concept-id` returns exact explanation history and up to two hops of related evidence. `backup --output` uses the SQLite online backup API and never overwrites a destination. See the [record contract](../skills/vibemind/references/records.md) for details.
+
+Explicit corrections use `record.retractEvidence` (source-project evidence IDs) or `record.removeAliases` (`conceptId` and `alias`); previous values remain in revision snapshots. Store short summaries: new strings are limited to 128 KiB, serialized input batches and project state to 512 KiB, and MCP business results to 2 MiB, measured as UTF-8 bytes. Oversized writes roll back before commit; unfinished decisions are never silently cut. Old large records remain readable through CLI and can be shortened. Upgrade Skill, CLI and MCP together to 0.3.0: `record-user` now requires its source path and guidance is `skip_covered_scope`; the SQLite schema is unchanged.
 
 Lookup respects Git and worktree boundaries and rejects symbolic-link state paths. All unfinished decisions are restored, including those after long histories.
 

@@ -3,7 +3,7 @@ name: vibemind
 description: 在用户希望用 AI 开发时边做边学、讨论实现思路或恢复 VibeMind 学习记录时使用。通过本地 MCP 或 CLI 读取跨项目记忆，讲解前检查历史，已解释概念默认不重讲。保存真实学习证据、项目地图、知识卡与未完成决定，支持中文伴学、回顾、暂停与恢复。
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   author: nahida1
 ---
 
@@ -32,7 +32,7 @@ node "<技能目录>/scripts/vibemind.mjs" context --cwd "<项目绝对路径>"
 1. `status` 返回 `initialized: false`，且用户正在启用伴学时，运行 `init`；旧记录只在 init 时迁入数据库，保留旧文件和暂停状态。档案为空代表尚无观察，不填造经历。
 2. 已有记录时读取 `context`。保留通用用户档案、当前项目观察、项目地图及**全部未完成决定**，恢复原讨论阶段，不重复已完成的引导。
 3. **每次开始讲解概念前必须查历史**：调用 `vibemind_knowledge` 或 `vibemind_context`，有明确 ID 时用 `conceptId`，否则用 `topic`；CLI 对应 `knowledge/context --concept-id "ID"` 或 `--topic "关键词"`。这一步不是可选回顾。
-   - context 的 `learning.alreadyExplained` 或 knowledge 的 `alreadyExplained` 为 true：跳过基础定义及原理复述，只讲本次应用和新差异。不反复问用户是否记得，不因缺少 applied 证据重讲。
+   - context 的 `learning.alreadyExplained` 或 knowledge 的 `alreadyExplained` 为 true：只表示存在讲解历史。对照 `explanationSummaries` 的 `scope` 与当前需求，只跳过已覆盖范围；未覆盖的基础内容仍需解释。范围不明保持未知，不反复问用户是否记得，不因缺少 applied 证据重讲。
    - 用户明确要求复习、重讲或仍不理解时可以重讲；优先换例子或缩小问题。
    - `conceptId: null` 表示没有精确匹配；候选、相关概念的状态不能替代当前概念判断。复用明确 ID/别名，一个概念解释过不代表所有子概念解释过。
    - `needsLegacyReview: true`：先核对 `legacyCards` 原文与讲解范围，明确记录已解释才补 explained 证据。不因旧记录缺少新字段重讲，未知保持未知；暂停项目不补写。
@@ -47,8 +47,10 @@ node "<技能目录>/scripts/vibemind.mjs" context --cwd "<项目绝对路径>"
 - 等待用户思考、等待设计确认或等待实施授权时，保存当前决定。重启、压缩上下文或点击设计确认不会自动授权编码。
 - 有明确实施授权时完成对应范围，简短解释关键改动、设计原因和实际验证结果。不要把用户此前已有的改动归为自己的工作。
 - 实际讲解后及时保存 explained 证据，包含概念、范围、摘要和来源卡片；不能提前标记待讲解计划，不等到任务结束或上下文压缩。用户实际应用另存 applied，不能替换 explained。
-- 在有意义的观察、决定或实现后保存档案、地图及知识卡。先读 [记录规范](references/records.md)，用 MCP `vibemind_record` 或 CLI UTF-8 stdin 和最新项目 revision 提交；通用档案用 `vibemind_record_user`/record-user 和独立 userRevision，先整合旧观察。成功后才能报告已保存。
+- 在有意义的观察、决定或实现后保存简短档案、地图及知识卡。先读 [记录规范](references/records.md)，用 MCP `vibemind_record` 或 CLI UTF-8 stdin 和最新项目 revision 提交；通用档案用 `vibemind_record_user`/record-user 和独立 userRevision，必须用 `projectPath` / `--cwd` 标明来源项目，先整合旧观察。暂停来源不能更新通用档案。成功后才能报告已保存。
 - 同一话题先查询概念及卡片并复用稳定 ID；明确别名可加入同一概念，模糊内容不能自动合并。只保留真实代码与交流证据，不记录全量聊天、凭证或虚构理解。
+- 用户明确指出误记时，在当前项目 record 中用 `retractEvidence` 撤销证据，或用 `removeAliases` 指明旧概念归属并更正额外别名；旧内容保留在修订快照。更正后的证据用新 ID，不自动撤销真实学习记录。
+- 遇到 `INPUT_TOO_LARGE`，缩短新写入摘要；遇到 `RESPONSE_TOO_LARGE`，减少 knowledge 的 `limit` 或使用 CLI 读取完整历史。默认 context 已按目录读取知识卡正文，不截断未完成决定。
 
 ## 暂停、回顾与恢复
 

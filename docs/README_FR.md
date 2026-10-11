@@ -33,7 +33,7 @@ VibeMind intègre un guidage adaptatif dans le développement assisté par IA. L
 
 Vous utilisez votre outil et votre modèle habituels. MCP et CLI partagent `~/.vibemind/memory.sqlite` ; le projet ne conserve que son identité dans `.vibemind/project.json`. Les préférences et l’historique d’explication sont partagés entre projets. Aucun compte ni API de modèle supplémentaire : l’hôte gère le processus stdio.
 
-Avant chaque explication, consultez l’ID exact du concept ou un alias explicite. Un concept déjà expliqué ne déclenche plus l’explication des bases, même sans preuve d’application. Une demande explicite de révision ou une incompréhension permet de réexpliquer. Les candidats similaires et les concepts parents ne valent pas explication du concept courant.
+Avant chaque explication, consultez l’ID exact du concept ou un alias explicite. `alreadyExplained` indique la présence d’un historique : comparez `explanationSummaries.scope` et ne sautez que les contenus déjà couverts. Les bases non expliquées doivent encore être présentées ; l’absence de preuve d’application ne déclenche pas une répétition. Une demande explicite de révision ou une incompréhension permet de réexpliquer. Les candidats similaires et les concepts parents ne valent pas explication du concept courant.
 
 ## Un guidage adaptatif au fil du développement
 
@@ -90,7 +90,7 @@ L’installation est limitée au projet par défaut. `--copy` copie des fichiers
 
 #### Importer le ZIP complet
 
-1. Construisez le ZIP complet depuis les sources 0.2.0, selon le [README principal](../README.md). Le ZIP 0.1.0 utilise l’ancien JSON et doit être mis à jour avant d’utiliser le nouveau MCP.
+1. Construisez le ZIP complet depuis les sources 0.3.0, selon le [README principal](../README.md). Le ZIP 0.1.0 utilise l’ancien JSON et doit être mis à jour avant d’utiliser le nouveau MCP.
 2. Dans WorkBuddy, ouvrez Skills → Ajouter un Skill → Importer un Skill et sélectionnez le ZIP. Qoder et TRAE peuvent employer le même paquet dans leur interface d’importation.
 3. Sélectionnez `vibemind` dans le projet cible.
 
@@ -153,7 +153,7 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 Les lectures ne modifient pas les données. `context` produit du Markdown ; `--json` demande du JSON. Les autres commandes renvoient du JSON. Les erreurs vont sur stderr avec un code de sortie non nul.
 
-`record` lit du JSON sur l’entrée standard. Il exige la valeur actuelle de `expectedRevision` et au moins un champ parmi `profile`, `projectMap`, `cards` et `decisions`. Chaque fiche comprend un `id` stable, un `title` et un `content`. Une décision comprend aussi `stage`.
+`record` lit du JSON sur l’entrée standard. Il exige la valeur actuelle de `expectedRevision` et au moins un champ à modifier, comme `profile`, `projectMap`, `cards`, `decisions`, le graphe ou une correction explicite. Chaque fiche comprend un `id` stable, un `title` et un `content`. Une décision comprend aussi `stage`.
 
 | stage | Signification |
 |---|---|
@@ -168,7 +168,9 @@ Les fiches et décisions sont mises à jour par ID ; les éléments non soumis r
 
 SQLite est la source active. Les révisions utilisateur/projet sont indépendantes ; modifications et instantanés sont enregistrés dans une transaction. Journal DELETE, synchronisation FULL et délai de verrou de 3 secondes. init importe le state.json valide en conservant les octets, sauvegardes, pause et décisions. L’ancien profile reste une observation du projet ; les anciennes fiches sont vérifiées avant d’ajouter une preuve explained.
 
-Un déplacement conserve l’ID. Un ID copié dont le répertoire d’origine existe est refusé ; init --new-project crée explicitement des données de projet séparées et vides. projects/context --project-id lisent aussi l’historique après suppression du dossier. user/record-user gèrent le profil commun ; knowledge recherche l’état exact et jusqu’à deux sauts de relations ; backup --output utilise la sauvegarde SQLite en ligne sans écrasement. [Contrat détaillé](../skills/vibemind/references/records.md)
+Un déplacement conserve l’ID. Une copie est refusée si le répertoire d’origine conserve la même identité ; la réutilisation de l’ancien chemin par un dossier sans rapport ne bloque pas la reprise. init --new-project crée explicitement des données séparées et vides. projects/context --project-id lisent aussi l’historique après suppression du dossier. user/record-user gèrent le profil commun ; les écritures exigent un projet source initialisé et actif (--cwd dans le CLI, projectPath dans MCP). knowledge recherche l’historique exact et jusqu’à deux sauts ; backup --output sauvegarde en ligne sans écrasement. [Contrat détaillé](../skills/vibemind/references/records.md)
+
+Pour corriger une erreur explicitement, utilisez record.retractEvidence (ID des preuves du projet source) ou record.removeAliases (conceptId et alias) ; les valeurs précédentes restent dans les instantanés. Conservez des résumés courts : 128 KiB par nouvelle chaîne, 512 KiB pour le JSON d’entrée et l’état du projet, 2 MiB pour un résultat MCP, mesurés en octets UTF-8. Une écriture trop volumineuse est annulée avant validation ; les décisions en attente ne sont jamais tronquées. Le CLI peut toujours lire et réduire les anciennes données volumineuses. Mettez à jour Skill, CLI et MCP ensemble vers 0.3.0 : record-user exige le chemin source et guidance devient skip_covered_scope ; le schéma SQLite est inchangé.
 
 La recherche respecte les limites Git et worktree et refuse les chemins d’état symboliques. Toutes les décisions non terminées sont restaurées, même après un long historique.
 
