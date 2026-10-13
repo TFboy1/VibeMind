@@ -90,7 +90,7 @@ npx skills add TFboy1/VibeMind --skill vibemind --agent trae --copy
 
 #### 完全な ZIP をインポートする
 
-1. 現在の 0.3.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
+1. 現在の 0.4.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
 2. WorkBuddy の「Skills → Skill の追加 → アップロード」から ZIP をインポートします。Qoder や TRAE の対応するインポート画面でも同じ ZIP を利用できます。
 3. 対象プロジェクトで `vibemind` を選択して呼び出します。
 
@@ -137,6 +137,8 @@ Skill のインストールだけでプロジェクトが自動初期化・有�
 
 Windows では `D:/tools/VibeMind/scripts/mcp.mjs` などを指定します。HTTP ポートは不要です。保存先を変更する場合、すべての宿主で同じ絶対 `VIBEMIND_HOME` を使います。接続だけではプロジェクトを初期化せず、ガイドも開始しません。Skill ZIP の CLI は Node 標準ライブラリのみで動作し、MCP は SDK を含む完全なリポジトリから実行します。
 
+configure --memory-home <絶対ローカルディレクトリ> で共有ユーザー設定を一度保存すれば、後からインストールする宿主も使えます。VIBEMIND_HOME が優先されます。宿主や MCP/CLI を切り替える時は doctor/status で実際の storeId、パス、版、プロジェクト ID を確認します。全宿主の事前インストールは不要です。同一学習者・同一 OS・信頼できるローカルファイルシステムが対象です。
+
 ## CLI
 
 インストールされたスクリプトの完全なパスと、対象プロジェクトを指定します。
@@ -147,13 +149,13 @@ node skills/vibemind/scripts/vibemind.mjs init --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs status --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project --topic CORS
-node skills/vibemind/scripts/vibemind.mjs pause --cwd /path/to/project
-node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
+node skills/vibemind/scripts/vibemind.mjs pause --cwd /path/to/project < pause-request.json
+node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project < resume-request.json
 ```
 
 読み取りは記録を変更しません。`context` は通常 Markdown を出力し、`--json` を加えると JSON を返します。その他のコマンドは JSON を出力します。エラーは stderr に出力され、終了コードは 0 以外になります。
 
-`record` は標準入力の JSON を読みます。現在の `expectedRevision` と、`profile`、`projectMap`、`cards`、`decisions`、グラフ記録、明示的な訂正などの更新項目が少なくとも一つ必要です。カードは固定の `id`、`title`、`content` を持ち、判断には `stage` も含めます。
+`record` は UTF-8 JSON を標準入力から読みます。pause/resume を含む全更新に、現在の `expectedStoreId`、`expectedProjectId`、`expectedRevision` と新しい UUID `operationId` が必要です。record-user の版は userRevision です。下の pause/resume 用ファイルには直前の状態から取得した制御項目を入れます。record には更新項目も必要です。カードは id/title/content、判断は追加で stage を持ちます。
 
 | stage | 意味 |
 |---|---|
@@ -170,13 +172,15 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
 
 移動は ID で継続します。元の登録先が同じ ID を保持する複製だけを拒否し、無関係なディレクトリによる旧パスの再利用は復元を妨げません。明示的な init --new-project で独立した空の記録を作ります。ディレクトリ削除後も projects と context --project-id で履歴を読めます。user/record-user は共通設定で、更新には初期化済みの有効な出所プロジェクト（CLI の --cwd、MCP の projectPath）が必須です。knowledge は正確な説明履歴と最大 2 ホップの関連、backup --output は上書きしない SQLite オンラインバックアップです。[記録仕様](../skills/vibemind/references/records.md)
 
-誤記の明示的な訂正には record.retractEvidence（出所プロジェクトの証拠 ID）または record.removeAliases（conceptId と alias）を使い、旧内容はスナップショットに保持します。短い要約を保存し、UTF-8 バイト数で新規文字列は 128 KiB、入力 JSON とプロジェクト状態は 512 KiB、MCP の結果は 2 MiB までです。上限超過の更新はコミット前にロールバックし、未完了判断は切り捨てません。旧大容量記録は CLI で読んで縮小できます。Skill、CLI、MCP を一緒に 0.3.0 へ更新してください。record-user は出所パスが必須となり、guidance は skip_covered_scope に変わります。SQLite スキーマは変更しません。
+誤記の明示的な訂正には record.retractEvidence（出所プロジェクトの証拠 ID）または record.removeAliases（conceptId と alias）を使い、旧内容はスナップショットに保持します。短い要約を保存し、UTF-8 バイト数で新規文字列は 128 KiB、入力 JSON とプロジェクト状態は 512 KiB、MCP の結果は 2 MiB までです。上限超過の更新はコミット前にロールバックし、未完了判断は切り捨てません。旧大容量記録は CLI で読んで縮小できます。
+
+Skill、CLI、MCP を **0.4.0** に更新し MCP を再起動します。migrate が schema 1 をオンラインバックアップして schema 2 に移行し、旧書き込み器を拒否します。init --cwd で同じプロジェクトをバインドし、履歴や停止状態を保ちます。既定 sharing=summary は説明範囲/要約のみ共有し、他のプロジェクト本文やコード位置は返しません。private はその出所を隠し、full は明示的に完全な例を共有します。要約に秘密を含めないでください。別名訂正には expectedGraphRevision が必要です。競合は再読して統合し、応答不明時は operation で確認、同一 ID/入力で再試行します。記録された応答は過去のコミットを示し、現在の状態ではありません。get は精確な記録、history はページング、correct は削除済み/停止出所の明示訂正、purge は確認した活動プロジェクトの削除（バックアップ/会話を除く）です。オフライン復元後は migrate --rotate-store-id --expected-store-id CURRENT_ID と init --rebind-store-id NEW_ID で旧要求を拒否してから書き込み器を再開します。[記録仕様](../skills/vibemind/references/records.md)
 
 Git と worktree の境界を越えて別プロジェクトの状態を読まず、状態パスのシンボリックリンクも拒否します。長い記録の後ろにある未完了の判断もすべて復元します。
 
 - 必要に応じて `.vibemind/` をプロジェクトの無視ルールに加えてください。CLI は自動編集しません。
 - バージョン競合では、最新の記録を読み直し、内容を統合して再提出します。
-- ロック競合では、他の書き込みを確認します。残留ロックの削除は、対応プロセスの終了を確認した後に手動で行います。
+- ロック競合は doctor で確認します。recover-lock --cwd ... --lock-token UUID はプロセス終了を確認できる一致したロックだけを消去します。稼働中/不明のロックは消しません。
 - 壊れた記録や非対応の形式は保持して報告します。init で初期化し直しません。
 - バックアップや書き込みの失敗では旧状態を保持します。ロック解放エラーでは、保存済みの可能性があるため先に status を確認します。
 

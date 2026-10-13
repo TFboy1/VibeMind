@@ -90,7 +90,7 @@ Standardmäßig wird nur im Projekt installiert. `--copy` verwendet normale Date
 
 #### Das vollständige ZIP importieren
 
-1. Erstelle das vollständige Skill-ZIP aus dem aktuellen 0.3.0-Quellcode, wie im [Haupt-README](../README.md) beschrieben. Das alte 0.1.0-ZIP schreibt Projekt-JSON und muss vor dem neuen MCP aktualisiert werden.
+1. Erstelle das vollständige Skill-ZIP aus dem aktuellen 0.4.0-Quellcode, wie im [Haupt-README](../README.md) beschrieben. Das alte 0.1.0-ZIP schreibt Projekt-JSON und muss vor dem neuen MCP aktualisiert werden.
 2. Öffne in WorkBuddy Skills → Skill hinzufügen → Skill hochladen und importiere das ZIP. Qoder und TRAE können dasselbe Paket über ihren Import verwenden.
 3. Wähle `vibemind` im Zielprojekt aus und rufe den Skill auf.
 
@@ -137,6 +137,8 @@ Bewahre das vollständige Repository in einem festen Verzeichnis auf und führe 
 
 Unter Windows etwa `D:/tools/VibeMind/scripts/mcp.mjs`. Der Host startet und beendet den Prozess ohne HTTP-Port. Für einen anderen Speicherort verwenden alle Hosts denselben absoluten `VIBEMIND_HOME`. Die Verbindung allein initialisiert kein Projekt und aktiviert keine Führung. Das ZIP enthält die CLI ohne Drittanbieter-Abhängigkeiten; MCP läuft mit dem SDK aus dem vollständigen Repository.
 
+configure --memory-home <absolutes lokales Verzeichnis> speichert einmal die gemeinsame Benutzerkonfiguration für später installierte Hosts. VIBEMIND_HOME hat weiterhin Vorrang. Prüfe bei Host- oder MCP/CLI-Wechsel mit doctor/status die tatsächliche storeId, den Pfad, Versionen und Projekt-ID. Nicht alle Hosts müssen vorher installiert sein. Unterstützt werden ein Lernender, ein Betriebssystem und ein zuverlässiges lokales Dateisystem.
+
 ## CLI
 
 Verwende den vollständigen Pfad zum installierten Skript und gib das Projekt an:
@@ -147,13 +149,13 @@ node skills/vibemind/scripts/vibemind.mjs init --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs status --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project
 node skills/vibemind/scripts/vibemind.mjs context --cwd /path/to/project --topic CORS
-node skills/vibemind/scripts/vibemind.mjs pause --cwd /path/to/project
-node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project
+node skills/vibemind/scripts/vibemind.mjs pause --cwd /path/to/project < pause-request.json
+node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project < resume-request.json
 ```
 
 Lesevorgänge ändern keine Daten. `context` liefert standardmäßig Markdown, mit `--json` stattdessen JSON. Andere Befehle geben JSON zurück. Fehler erscheinen auf stderr mit einem Exit-Code ungleich null.
 
-`record` liest JSON von stdin. Erforderlich sind die aktuelle `expectedRevision` und mindestens ein Update-Feld, etwa `profile`, `projectMap`, `cards`, `decisions`, Graphdaten oder eine ausdrückliche Korrektur. Karten enthalten eine stabile `id`, einen `title` und `content`; Entscheidungen zusätzlich `stage`.
+`record` liest UTF-8-JSON von stdin. Jede Änderung, einschließlich pause/resume, benötigt aktuelle `expectedStoreId`, `expectedProjectId`, `expectedRevision` und eine neue UUID `operationId`; record-user verwendet userRevision. Die unten verwendeten pause/resume-Dateien enthalten diese Felder aus dem aktuellen Status. record benötigt außerdem ein Update-Feld. Karten enthalten id/title/content, Entscheidungen zusätzlich stage.
 
 | stage | Bedeutung |
 |---|---|
@@ -170,13 +172,15 @@ SQLite ist die aktive Datenquelle. Benutzer- und Projektrevisionen sind unabhän
 
 Beim Verschieben bleibt die ID erhalten. Eine Kopie wird abgelehnt, wenn der registrierte Ursprungsordner dieselbe Identität noch besitzt; eine unabhängige Wiederverwendung des alten Pfads blockiert die Wiederaufnahme nicht. init --new-project erstellt ausdrücklich leere, getrennte Projektdaten. projects/context --project-id lesen Historien nach dem Löschen des Ordners. user/record-user verwalten das gemeinsame Profil; Schreibvorgänge brauchen ein initialisiertes, aktives Quellprojekt (--cwd im CLI, projectPath in MCP). knowledge prüft den Erklärungsverlauf und bis zu zwei Beziehungsschritte, backup --output sichert online ohne Überschreiben. [Datenvertrag](../skills/vibemind/references/records.md)
 
-Ausdrückliche Korrekturen verwenden record.retractEvidence (Nachweis-IDs des Quellprojekts) oder record.removeAliases (conceptId und alias); die alten Werte bleiben in Snapshots. Speichere kurze Zusammenfassungen: neue Strings maximal 128 KiB, Eingabe-JSON und Projektzustand maximal 512 KiB, MCP-Ergebnisse maximal 2 MiB, gemessen in UTF-8-Bytes. Zu große Schreibvorgänge werden vor dem Commit zurückgerollt; offene Entscheidungen werden nie still gekürzt. Alte große Datensätze bleiben per CLI lesbar und können verkleinert werden. Aktualisiere Skill, CLI und MCP gemeinsam auf 0.3.0: record-user benötigt den Quellpfad und guidance wird skip_covered_scope; das SQLite-Schema bleibt unverändert.
+Ausdrückliche Korrekturen verwenden record.retractEvidence (Nachweis-IDs des Quellprojekts) oder record.removeAliases (conceptId und alias); die alten Werte bleiben in Snapshots. Speichere kurze Zusammenfassungen: neue Strings maximal 128 KiB, Eingabe-JSON und Projektzustand maximal 512 KiB, MCP-Ergebnisse maximal 2 MiB, gemessen in UTF-8-Bytes. Zu große Schreibvorgänge werden vor dem Commit zurückgerollt; offene Entscheidungen werden nie still gekürzt. Alte große Datensätze bleiben per CLI lesbar und können verkleinert werden.
+
+Aktualisiere Skill, CLI und MCP gemeinsam auf **0.4.0** und starte MCP neu. migrate sichert Schema 1 online und stellt auf Schema 2 um; alte Clients verweigern danach Schreibzugriffe. init --cwd bindet dasselbe Projekt und erhält Verlauf und Pause. sharing=summary teilt standardmäßig Lernbereiche/Zusammenfassungen ohne andere Projekttexte oder Codepfade; private verbirgt die Quelle, full erlaubt ausdrücklich vollständige Fälle. Zusammenfassungen dürfen keine privaten Details enthalten. Alias-Korrektur erfordert expectedGraphRevision. Bei Konflikten erneut lesen und integrieren; nach verlorener Antwort operation abfragen und dieselbe ID/Eingabe wiederholen. Ein Beleg beschreibt einen früheren Commit, nicht den aktuellen Modus. get liest exakte Datensätze, history paginiert, correct korrigiert ausdrücklich gelöschte/pausierte Quellen, purge löscht ein bestätigtes aktives Projekt samt Revisionen, ohne Backups/Host-Chats. Nach Offline-Wiederherstellung erst migrate --rotate-store-id --expected-store-id CURRENT_ID und init --rebind-store-id NEW_ID ausführen, dann Schreibprozesse starten. [Vollständiger Vertrag](../skills/vibemind/references/records.md)
 
 Die Suche respektiert Git- und Worktree-Grenzen und lehnt symbolisch verknüpfte Zustandspfade ab. Alle offenen Entscheidungen werden wiederhergestellt, auch hinter langen Historien.
 
 - Du kannst `.vibemind/` zu den Ignore-Regeln hinzufügen; die CLI ändert sie nicht.
 - Bei einem Versionskonflikt liest du den aktuellen Zustand erneut und integrierst die neuen Daten.
-- Bei einer Sperre prüfst du andere Schreibvorgänge. Eine zurückgelassene Sperrdatei darf erst nach Bestätigung des Prozessendes manuell entfernt werden.
+- Prüfe Sperren mit doctor; recover-lock --cwd ... --lock-token UUID entfernt nur die passende Sperre nach bestätigt beendetem Prozess. Aktive oder unbekannte Sperren bleiben erhalten.
 - Beschädigte oder nicht unterstützte Daten bleiben erhalten. init setzt sie nicht zurück.
 - Scheitert das Backup oder Schreiben, bleibt der alte Zustand erhalten. Scheitert die Freigabe der Sperre, prüfe zunächst status: Die Änderung könnte bereits gespeichert sein.
 

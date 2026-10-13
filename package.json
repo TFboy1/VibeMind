@@ -1,6 +1,6 @@
 {
   "name": "vibemind",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "中文伴学 Skill、本地 MCP 与跨项目 SQLite 记忆图谱",
   "type": "module",
