@@ -86,7 +86,7 @@ npm ci
 
 宿主会启动并管理 MCP 进程；无需 HTTP 服务或端口。CLI 只依赖 Node.js 内置模块，MCP 使用仓库中的官方 SDK。
 
-MCP 提供 20 个工具，覆盖初始化、上下文、记录、暂停/恢复、知识查询、精确读取、分页、提交回执、诊断、配置、迁移、纠错、删除、遗留锁处理和在线备份。完整参数见[记录规范](skills/vibemind/references/records.md)。
+MCP 提供 23 个工具，覆盖初始化、上下文、记录、暂停/恢复、知识查询、精确读取、分页、提交回执、诊断、配置、迁移、纠错、删除、遗留锁处理和在线备份。完整参数见[记录规范](skills/vibemind/references/records.md)。
 
 ### Claude Code、Codex、WorkBuddy 共享记忆
 
@@ -108,7 +108,7 @@ node "<技能目录>/scripts/vibemind.mjs" doctor --cwd "<项目绝对目录>"
 - 用户档案和跨项目概念图谱保存在用户目录的 SQLite 数据库中。
 - 项目目录保存 `.vibemind/project.json` 身份文件，绑定项目 ID 和库 ID；初始化中断有待完成标记，可由 `init` 安全接续。项目地图、观察、知识卡和决定保存在数据库。
 - 移动项目目录后可按项目 ID 接续。复制目录若与仍存在的原项目共享 ID，会报告冲突；明确要建立独立项目时使用 `init --new-project`。
-- 首次 `init` 校验并导入旧 JSON，保留旧文件、暂停状态和未完成决定。格式 1 的 SQLite 先用 `migrate` 在线备份升级，再初始化绑定。读取本身不迁移、初始化或恢复项目。
+- 首次 `init` 校验并导入旧 JSON，保留旧文件、暂停状态和未完成决定。格式 1/2 的 SQLite 先用 `migrate` 在线备份升级，再初始化绑定。读取本身不迁移、初始化或恢复项目。
 - 项目和用户档案使用独立版本号；所有业务写入（含暂停/恢复）必须携带预期库/项目 ID、版本和唯一操作编号。并发冲突先读取完整内容并整合；丢响应可查回执，重试不重复提交或翻转当前模式。
 - 默认 `summary` 共享通用讲解范围/摘要，隐藏其他项目卡片正文和代码位置；敏感项目可选 `private`，用户明确允许共享完整案例时选 `full`。摘要文字仍需避免私密内容，这不是多用户权限系统。
 - 用户指出误记时可撤销证据/更正别名，旧内容保留修订；别名更正另核对全局图谱版本。`correct` 支持明确更正已删除目录或暂停项目的旧来源；`purge` 用项目 ID 确认删除活动记录及修订，不删除备份、旧 JSON 或宿主聊天。
@@ -134,10 +134,10 @@ node "<技能目录>/scripts/vibemind.mjs" backup --output "<绝对路径>/memor
 
 CLI 输出支持 JSON；`context` 默认输出 Markdown。完整参数、MCP 工具和记录格式见[记录规范](skills/vibemind/references/records.md)，引导行为见[教学规范](skills/vibemind/references/teaching.md)。
 
-### 从 0.2/0.3 升级到 0.4.0
+### 从 0.2/0.3/0.4 升级到 0.5.0
 
 1. 更新各宿主完整 Skill、CLI 和 MCP，重启 MCP 进程，用 `doctor` 确认实际记忆库路径。
-2. 对格式 1 库运行 `node "<技能目录>/scripts/vibemind.mjs" migrate`。程序持写锁，先保存并验证旧库在线备份，再升级为格式 2；失败回滚，随后旧写入器拒写。
+2. 对格式 1/2 库运行 `node "<技能目录>/scripts/vibemind.mjs" migrate`。程序持写锁，先保存并验证旧库在线备份，再升级为格式 3；失败回滚，随后旧写入器拒写。
 3. 对已有项目运行 `init --cwd "<项目目录>"`，接续绑定同一项目，保留 revision、暂停和学习历史。不要用 `--new-project` 代替升级。
 4. 所有业务写入携带 `expectedStoreId`、`expectedProjectId`、`expectedRevision`、`operationId`；`record-user` 的版本取 `userRevision`。新请求生成 UUID，同请求重试保留原输入/编号。
 
@@ -158,3 +158,28 @@ npm test
 测试覆盖后来安装宿主、库绑定、旧写入器拒绝、初始化断点恢复、同项目/通用档案并发、回执重试、暂停、私有/摘要共享、超过 100 条历史分页、纠错/删除和备份恢复代际，以及真实 stdio MCP 的发现、并发、关闭和重启。当前修复与 72 项边界的范围见[边界审查](docs/MEMORY_BOUNDARIES.md)；真实三个产品的模型行为仍需分别接入验收。
 
 设计参考及许可信息见 [NOTICE.md](skills/vibemind/NOTICE.md)。
+
+## 0.5.0：全域知识发现
+
+根据项目与模糊目标定位知识锚点，覆盖 roadmap.sh 全部公开路线及主题，按需在线检索。宿主 Agent 提取领域和同义查询、判断相邻语义；本地 FTS5 召回与记忆规则筛选最多三个机会。没有记录的能力保持 unknown，已有讲解只按实际 scope 跳过。
+
+- 新增 discover（search/recommend）、opportunities、extensions；不需要独立模型 API 或新运行依赖。
+- 活跃伴学项目默认任务完成后最多邀请一次；拒绝、暂缓、直接实现后停止本会话提醒，缺少真实会话 ID 时只列候选。接受后才引导，不自动引入技术或扩大实施授权。
+- 候选与反馈用 record.growth 保存；全局提醒频率及路线范围用 record-user.learningPreferences 更新。原讲解/应用证据继续有效。
+- 官方源失败时按实际能力尝试镜像；支持 configure --roadmap-mirrors JSON。公开资料缓存与学习库分开，离线可复用已读取资料，来源全不可用时继续原任务。
+- 数据库格式 3：先明确 migrate 在线备份升级；2→3 保留身份、版本和暂停，旧格式只读。各宿主更新完整 Skill/CLI/MCP 后重启。
+
+详细参数与示例见 [发现规范](skills/vibemind/references/discovery.md)。原始 roadmap 内容不随包分发，来源与许可见 [NOTICE.md](skills/vibemind/NOTICE.md)。
+
+本版不包含向量模型、全量教程同步、自动 Hook、可执行插件、独立能力评级或成长地图。本项目没有前端与前端 build 脚本；验证为 npm run check 与 npm test。
+
+### 构建完整 Skill ZIP
+
+在仓库根目录用 PowerShell 打包，归档根层直接包含 SKILL.md、NOTICE.md、references/ 和 scripts/。MCP 仍通过完整仓库及 npm ci 使用。
+
+```powershell
+New-Item -ItemType Directory -Path dist -Force | Out-Null
+Compress-Archive -Path skills/vibemind/* -DestinationPath dist/vibemind-0.5.0.zip
+```
+
+现有同名 ZIP 请先保留或改用其他输出名称；无需将数据库、缓存或 node_modules 放入 Skill ZIP。

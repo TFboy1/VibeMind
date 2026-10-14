@@ -90,7 +90,7 @@ Standardmäßig wird nur im Projekt installiert. `--copy` verwendet normale Date
 
 #### Das vollständige ZIP importieren
 
-1. Erstelle das vollständige Skill-ZIP aus dem aktuellen 0.4.0-Quellcode, wie im [Haupt-README](../README.md) beschrieben. Das alte 0.1.0-ZIP schreibt Projekt-JSON und muss vor dem neuen MCP aktualisiert werden.
+1. Erstelle das vollständige Skill-ZIP aus dem aktuellen 0.5.0-Quellcode, wie im [Haupt-README](../README.md) beschrieben. Das alte 0.1.0-ZIP schreibt Projekt-JSON und muss vor dem neuen MCP aktualisiert werden.
 2. Öffne in WorkBuddy Skills → Skill hinzufügen → Skill hochladen und importiere das ZIP. Qoder und TRAE können dasselbe Paket über ihren Import verwenden.
 3. Wähle `vibemind` im Zielprojekt aus und rufe den Skill auf.
 
@@ -174,7 +174,7 @@ Beim Verschieben bleibt die ID erhalten. Eine Kopie wird abgelehnt, wenn der reg
 
 Ausdrückliche Korrekturen verwenden record.retractEvidence (Nachweis-IDs des Quellprojekts) oder record.removeAliases (conceptId und alias); die alten Werte bleiben in Snapshots. Speichere kurze Zusammenfassungen: neue Strings maximal 128 KiB, Eingabe-JSON und Projektzustand maximal 512 KiB, MCP-Ergebnisse maximal 2 MiB, gemessen in UTF-8-Bytes. Zu große Schreibvorgänge werden vor dem Commit zurückgerollt; offene Entscheidungen werden nie still gekürzt. Alte große Datensätze bleiben per CLI lesbar und können verkleinert werden.
 
-Aktualisiere Skill, CLI und MCP gemeinsam auf **0.4.0** und starte MCP neu. migrate sichert Schema 1 online und stellt auf Schema 2 um; alte Clients verweigern danach Schreibzugriffe. init --cwd bindet dasselbe Projekt und erhält Verlauf und Pause. sharing=summary teilt standardmäßig Lernbereiche/Zusammenfassungen ohne andere Projekttexte oder Codepfade; private verbirgt die Quelle, full erlaubt ausdrücklich vollständige Fälle. Zusammenfassungen dürfen keine privaten Details enthalten. Alias-Korrektur erfordert expectedGraphRevision. Bei Konflikten erneut lesen und integrieren; nach verlorener Antwort operation abfragen und dieselbe ID/Eingabe wiederholen. Ein Beleg beschreibt einen früheren Commit, nicht den aktuellen Modus. get liest exakte Datensätze, history paginiert, correct korrigiert ausdrücklich gelöschte/pausierte Quellen, purge löscht ein bestätigtes aktives Projekt samt Revisionen, ohne Backups/Host-Chats. Nach Offline-Wiederherstellung erst migrate --rotate-store-id --expected-store-id CURRENT_ID und init --rebind-store-id NEW_ID ausführen, dann Schreibprozesse starten. [Vollständiger Vertrag](../skills/vibemind/references/records.md)
+Aktualisiere Skill, CLI und MCP gemeinsam auf **0.5.0** und starte MCP neu. migrate sichert Schema 1/2 online und stellt auf Schema 3 um; alte Clients verweigern danach Schreibzugriffe. init --cwd bindet dasselbe Projekt und erhält Verlauf und Pause. sharing=summary teilt standardmäßig Lernbereiche/Zusammenfassungen ohne andere Projekttexte oder Codepfade; private verbirgt die Quelle, full erlaubt ausdrücklich vollständige Fälle. Zusammenfassungen dürfen keine privaten Details enthalten. Alias-Korrektur erfordert expectedGraphRevision. Bei Konflikten erneut lesen und integrieren; nach verlorener Antwort operation abfragen und dieselbe ID/Eingabe wiederholen. Ein Beleg beschreibt einen früheren Commit, nicht den aktuellen Modus. get liest exakte Datensätze, history paginiert, correct korrigiert ausdrücklich gelöschte/pausierte Quellen, purge löscht ein bestätigtes aktives Projekt samt Revisionen, ohne Backups/Host-Chats. Nach Offline-Wiederherstellung erst migrate --rotate-store-id --expected-store-id CURRENT_ID und init --rebind-store-id NEW_ID ausführen, dann Schreibprozesse starten. [Vollständiger Vertrag](../skills/vibemind/references/records.md)
 
 Die Suche respektiert Git- und Worktree-Grenzen und lehnt symbolisch verknüpfte Zustandspfade ab. Alle offenen Entscheidungen werden wiederhergestellt, auch hinter langen Historien.
 
@@ -204,3 +204,17 @@ VibeMind übernimmt und adaptiert Ideen aus [VibeWise](https://github.com/nykooi
 Dieses Projekt ergänzt adaptive Programmierführung, Node-CLI, lokalen stdio-MCP, Benutzer-SQLite-Graph, Projektidentität, JSON-Migration, Transaktionssnapshots, Online-Backups und genaue projektübergreifende Erklärungskontrolle. Herkunft und beide MIT-Lizenzen stehen in [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 Die Unterstützungsbuttons führen zu denselben Zielen wie beim [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) des Maintainers.
+
+## 0.5.0: Wissensentdeckung über alle Roadmaps
+
+Alle öffentlichen roadmap.sh-Roadmaps werden bei Bedarf online gelesen. Der Host-Agent wählt Fachgebiete, erweitert Suchbegriffe und beurteilt semantische Beziehungen. Lokales FTS5 und Lernhistorie wählen bis zu drei Chancen; unbekannte Fähigkeiten bleiben unknown.
+
+Neue Befehle: discover (search/recommend), opportunities und extensions. record.growth speichert Kandidaten und tatsächliche Rückmeldungen; record-user.learningPreferences steuert off/normal und Roadmaps. explained und applied bleiben getrennt.
+
+Aktive Projekte bieten nach Aufgabenabschluss höchstens eine Einladung pro identifizierbarer Sitzung. Ablehnung, Verschieben oder direkte Umsetzung stoppen weitere Einladungen dieser Sitzung. Annahme erteilt keine zusätzliche Implementierungserlaubnis.
+
+Bei Ausfall offizieller Quellen folgen geeignete Mirrors. configure --roadmap-mirrors JSON erhält den Speicherpfad. Öffentliche Daten werden getrennt zwischengespeichert; Netzwerkfehler erzeugen keine Ersatzdatenbank.
+
+Alle Hosts aktualisieren und Schema 1/2 ausdrücklich per migrate mit Online-Backup auf 3 bringen. Schema-2-Identität, Revisionen und Pause bleiben erhalten. Kein Vektormodell, vollständiger Tutorial-Download, automatischer Hook oder Frontend.
+
+[Entdeckungsvertrag](../skills/vibemind/references/discovery.md) und [Quellen/Lizenzen](../skills/vibemind/NOTICE.md).

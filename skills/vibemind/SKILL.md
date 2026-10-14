@@ -1,9 +1,9 @@
 ---
 name: vibemind
-description: 在用户希望用 AI 开发时边做边学、讨论实现思路或恢复 VibeMind 学习记录时使用。通过本地 MCP 或 CLI 读取跨项目记忆，讲解前检查历史，已解释概念默认不重讲。保存真实学习证据、项目地图、知识卡与未完成决定，支持中文伴学、回顾、暂停与恢复。
+description: 在用户希望用 AI 开发时边做边学、讨论实现思路、发现当前项目相邻的知识方向或恢复 VibeMind 学习记录时使用。通过本地 MCP 或 CLI 读取跨项目记忆，讲解前检查历史，已解释概念默认不重讲。保存真实学习证据、项目地图、知识卡与未完成决定，支持中文伴学、回顾、暂停与恢复。
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
   author: nahida1
 ---
 
@@ -20,7 +20,7 @@ metadata:
 
 ## 读取与恢复
 
-已连接 VibeMind MCP 时，优先调用 `vibemind_status`、`vibemind_context`，明确传入用户项目的绝对 `projectPath`。Skill 安装目录与记忆目录独立：各宿主复用用户共享配置，环境变量 `VIBEMIND_HOME` 优先。无需事先安装全部宿主，新宿主先核对实际 `memoryHome/storeId/softwareVersion/apiVersion`；MCP 退回 CLI 时也核对同一库。版本 0.4.0 使用数据库格式 2，升级后重启旧 MCP 进程。
+已连接 VibeMind MCP 时，优先调用 `vibemind_status`、`vibemind_context`，明确传入用户项目的绝对 `projectPath`。Skill 安装目录与记忆目录独立：各宿主复用用户共享配置，环境变量 `VIBEMIND_HOME` 优先。无需事先安装全部宿主，新宿主先核对实际 `memoryHome/storeId/softwareVersion/apiVersion`；MCP 退回 CLI 时也核对同一库。版本 0.5.0 使用数据库格式 3，升级后重启旧 MCP 进程。
 
 没有 MCP 时，从本技能真实安装位置定位 [CLI](scripts/vibemind.mjs)，使用完整路径和用户项目目录调用。不要把技能目录当项目目录，不依赖终端当前目录猜测项目。CLI 只依赖 Node.js 22.20+；MCP 服务的安装见仓库 README。
 
@@ -29,7 +29,7 @@ node "<技能目录>/scripts/vibemind.mjs" status --cwd "<项目绝对路径>"
 node "<技能目录>/scripts/vibemind.mjs" context --cwd "<项目绝对路径>"
 ```
 
-1. `status.reason: not_initialized` 且用户正在启用伴学时，说明实际记忆目录和默认 `summary` 共享范围，再运行 `init`。摘要共享保留通用讲解范围，不导出其他项目卡片正文/代码位置；用户明确选择 `private` 时禁止跨项目查询，`full` 时允许共享完整案例。摘要仍需避免私密内容。旧 JSON 在 init 时导入并保留；格式 1 库需先按用户升级要求运行 `migrate`，它会在线备份，之后 init 接续绑定同一项目，不恢复暂停。档案为空不填造经历。
+1. `status.reason: not_initialized` 且用户正在启用伴学时，说明实际记忆目录和默认 `summary` 共享范围，再运行 `init`。摘要共享保留通用讲解范围，不导出其他项目卡片正文/代码位置；用户明确选择 `private` 时禁止跨项目查询，`full` 时允许共享完整案例。摘要仍需避免私密内容。旧 JSON 在 init 时导入并保留；格式 1/2 库需先按用户升级要求运行 `migrate`，它会在线备份，之后 init 接续绑定同一项目，不恢复暂停。档案为空不填造经历。
    - `store_mismatch`、`missing_project_record`、库不存在或身份损坏：保留记录，诊断连接/备份，不能 init 空库或 newProject 绕过。`initialization_pending` 用 init 恢复；身份丢失用 projects 核对后明确 attach 既有 ID。详见记录规范。
 2. 已有记录时读取 `context`。保留通用用户档案、当前项目观察、项目地图及**全部未完成决定**，恢复原讨论阶段，不重复已完成的引导。
 3. **每次开始讲解概念前必须查历史**：调用 `vibemind_knowledge` 或 `vibemind_context`，有明确 ID 时用 `conceptId`，否则用 `topic`；CLI 对应 `knowledge/context --concept-id "ID"` 或 `--topic "关键词"`。这一步不是可选回顾。
@@ -61,3 +61,9 @@ node "<技能目录>/scripts/vibemind.mjs" context --cwd "<项目绝对路径>"
 用户说“回顾知识卡”，按主题读取并解释相关记录，保持当前启用状态。可选练习帮助迁移知识；普通回顾不强制考试。
 
 原生选择器可用于确认或偏好，工具没有选择器时正常对话即可。没有 Hook 的宿主通过技能入口或自然语言显式恢复，不承诺所有新会话都自动加载。尊重宿主及项目现有授权、技术栈和验证要求；本技能不会调用额外模型服务。
+
+## 全域知识发现
+
+用户主动探索或活跃项目完成重要任务时，先读 [发现规范](references/discovery.md)。用现有 Agent 将需求定位到任意公开 roadmap.sh 路线，search 文字召回，再 recommend 语义相邻知识；不预设领域、不把未知判为不会。只保存 recordCandidate 和实际反馈，讲解/应用继续分别记录。
+
+默认任务完成后每会话最多邀请一次；频率关闭、暂停、紧急任务、直接实现、拒绝或暂缓时停止主动邀请。真实会话标识未知时仅返回候选。record.growth 原子占位成功后才发邀请，重试回执不补发。接受邀请不扩大实施授权。上游资料或镜像不可用时继续原任务及已有记忆流程。

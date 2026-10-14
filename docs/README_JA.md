@@ -90,7 +90,7 @@ npx skills add TFboy1/VibeMind --skill vibemind --agent trae --copy
 
 #### 完全な ZIP をインポートする
 
-1. 現在の 0.4.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
+1. 現在の 0.5.0 ソースから完全な Skill ZIP を作成します。[メイン README](../README.md) を参照してください。0.1.0 の ZIP は旧 JSON 方式のため、新 MCP と使う前に更新が必要です。
 2. WorkBuddy の「Skills → Skill の追加 → アップロード」から ZIP をインポートします。Qoder や TRAE の対応するインポート画面でも同じ ZIP を利用できます。
 3. 対象プロジェクトで `vibemind` を選択して呼び出します。
 
@@ -174,7 +174,7 @@ node skills/vibemind/scripts/vibemind.mjs resume --cwd /path/to/project < resume
 
 誤記の明示的な訂正には record.retractEvidence（出所プロジェクトの証拠 ID）または record.removeAliases（conceptId と alias）を使い、旧内容はスナップショットに保持します。短い要約を保存し、UTF-8 バイト数で新規文字列は 128 KiB、入力 JSON とプロジェクト状態は 512 KiB、MCP の結果は 2 MiB までです。上限超過の更新はコミット前にロールバックし、未完了判断は切り捨てません。旧大容量記録は CLI で読んで縮小できます。
 
-Skill、CLI、MCP を **0.4.0** に更新し MCP を再起動します。migrate が schema 1 をオンラインバックアップして schema 2 に移行し、旧書き込み器を拒否します。init --cwd で同じプロジェクトをバインドし、履歴や停止状態を保ちます。既定 sharing=summary は説明範囲/要約のみ共有し、他のプロジェクト本文やコード位置は返しません。private はその出所を隠し、full は明示的に完全な例を共有します。要約に秘密を含めないでください。別名訂正には expectedGraphRevision が必要です。競合は再読して統合し、応答不明時は operation で確認、同一 ID/入力で再試行します。記録された応答は過去のコミットを示し、現在の状態ではありません。get は精確な記録、history はページング、correct は削除済み/停止出所の明示訂正、purge は確認した活動プロジェクトの削除（バックアップ/会話を除く）です。オフライン復元後は migrate --rotate-store-id --expected-store-id CURRENT_ID と init --rebind-store-id NEW_ID で旧要求を拒否してから書き込み器を再開します。[記録仕様](../skills/vibemind/references/records.md)
+Skill、CLI、MCP を **0.5.0** に更新し MCP を再起動します。migrate が schema 1/2 をオンラインバックアップして schema 3 に移行し、旧書き込み器を拒否します。init --cwd で同じプロジェクトをバインドし、履歴や停止状態を保ちます。既定 sharing=summary は説明範囲/要約のみ共有し、他のプロジェクト本文やコード位置は返しません。private はその出所を隠し、full は明示的に完全な例を共有します。要約に秘密を含めないでください。別名訂正には expectedGraphRevision が必要です。競合は再読して統合し、応答不明時は operation で確認、同一 ID/入力で再試行します。記録された応答は過去のコミットを示し、現在の状態ではありません。get は精確な記録、history はページング、correct は削除済み/停止出所の明示訂正、purge は確認した活動プロジェクトの削除（バックアップ/会話を除く）です。オフライン復元後は migrate --rotate-store-id --expected-store-id CURRENT_ID と init --rebind-store-id NEW_ID で旧要求を拒否してから書き込み器を再開します。[記録仕様](../skills/vibemind/references/records.md)
 
 Git と worktree の境界を越えて別プロジェクトの状態を読まず、状態パスのシンボリックリンクも拒否します。長い記録の後ろにある未完了の判断もすべて復元します。
 
@@ -204,3 +204,17 @@ Noah Kim 氏の [VibeWise](https://github.com/nykooi1/vibe-wise) から、ユー
 VibeMind は適応型のプログラミングガイド、Node CLI、ローカル stdio MCP、ユーザー SQLite 図構造、プロジェクト ID、旧記録移行、トランザクション履歴とオンラインバックアップ、プロジェクト横断の説明履歴確認を追加しています。出典と両方の MIT ライセンスは [NOTICE.md](../skills/vibemind/NOTICE.md) に含まれます。
 
 上の支援ボタンは、保守者の [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) と同じリンクを使っています。
+
+## 0.5.0：全ロードマップの知識発見
+
+roadmap.sh の全公開ロードマップを対象に、必要な資料だけをオンラインで取得します。ホスト Agent が分野、同義語と意味上の関連を判断し、ローカル FTS5 と学習履歴で最大三つの機会を選びます。記録がない能力は unknown のままです。
+
+discover（search/recommend）、opportunities、extensions を追加。候補と実際の反応は record.growth、頻度 off/normal と対象範囲は record-user.learningPreferences に保存します。explained と applied は別の証拠です。
+
+有効なプロジェクトはタスク完了後、識別できる会話ごとに最大一回招待します。拒否、延期、直接実装の要求後はその会話の招待を停止します。承諾は実装の許可ではありません。
+
+公式ソースが使えない場合は機能に応じたミラーを試し、configure --roadmap-mirrors JSON で設定できます。公開資料のキャッシュは学習庫と分離し、通信失敗で代替データベースを作りません。
+
+全ホストを更新し、オンラインバックアップ付き migrate で schema 1/2 から 3 へ移行します。schema 2 の ID、履歴と停止状態は保持します。ベクトルモデル、全教材同期、自動 Hook、フロントエンドは追加しません。
+
+[発見仕様](../skills/vibemind/references/discovery.md)・[出所とライセンス](../skills/vibemind/NOTICE.md)。

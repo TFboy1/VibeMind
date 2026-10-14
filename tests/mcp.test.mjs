@@ -49,7 +49,7 @@ async function call(client, command, args = {}) {
 test('真实 stdio：发现工具、只读不初始化、错误可识别、正常关闭', { timeout: 20_000 }, async t => {
   const f = session(t), { client, transport } = await f.connect();
   const list = await client.listTools();
-  assert.equal(list.tools.length, 20);
+  assert.equal(list.tools.length, 23);
   assert.match(client.getInstructions(), /alreadyExplained=true/);
   assert.match(client.getInstructions(), /缺少 applied 证据不能作为重讲理由/);
   assert.equal((await call(client, 'status', { projectPath: f.a })).initialized, false);

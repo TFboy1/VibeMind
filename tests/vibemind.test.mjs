@@ -503,6 +503,7 @@ test('后来安装不同目录的 CLI，仍接续同一库并保持暂停', t =>
   f.call('record', { expectedRevision: 0, ...explanation }); f.call('pause');
   const later = path.join(f.root, 'later-host.mjs');
   fs.writeFileSync(later, fs.readFileSync(script, 'utf8'), 'utf8');
+  for (const module of ['discovery.mjs', 'growth.mjs']) fs.copyFileSync(path.join(path.dirname(script), module), path.join(f.root, module));
   const current = ok(run(f, 'context', undefined, ['--cwd', f.a, '--json'], later));
   assert.equal(current.storeId, original.storeId);
   assert.equal(current.projectId, original.projectId);
@@ -771,7 +772,7 @@ function legacyClient(t, f, commit) {
   return (command, input, flags = ['--cwd', f.a]) => spawnSync(process.execPath, [file, command, ...flags], { env: { ...process.env, VIBEMIND_HOME: f.home }, input: input === undefined ? undefined : JSON.stringify(input), encoding: 'utf8', timeout: 10_000 });
 }
 
-test('旧0.2客户端对格式2拒写，无法绕过来源或暂停规则', t => {
+test('旧0.2客户端对当前格式拒写，无法绕过来源或暂停规则', t => {
   const f = fixture(t); f.call('init'); f.call('pause');
   const old = legacyClient(t, f, 'f767dc0'); if (!old) return;
   const before = disk(f.root);
@@ -789,7 +790,7 @@ test('格式1在线备份升级保留项目/用户/证据，旧写入器拒绝�
   rejects(() => f.call('get', undefined, { kind: 'evidence', id: 'cors-explained' }), 'MIGRATION_REQUIRED');
   rejects(() => execute('resume', { home: f.home, cwd: f.a }, { expectedRevision: 2, expectedStoreId: randomUUID(), expectedProjectId: initial.projectId, operationId: randomUUID() }), 'MIGRATION_REQUIRED');
   const upgraded = await f.call('migrate');
-  assert.equal(upgraded.databaseSchemaVersion, 2); assert.equal(upgraded.migrated, true);
+  assert.equal(upgraded.databaseSchemaVersion, 3); assert.equal(upgraded.migrated, true);
   const backup = new DatabaseSync(upgraded.backupFile, { readOnly: true });
   try { assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 1); assert.equal(backup.prepare('SELECT count(*) AS n FROM evidence').get().n, 1); }
   finally { backup.close(); }

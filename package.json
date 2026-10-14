@@ -1,8 +1,8 @@
 {
   "name": "vibemind",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "中文伴学 Skill、本地 MCP 与跨项目 SQLite 记忆图谱",
+  "description": "中文伴学 Skill、本地 MCP、全域 roadmap 知识发现与跨项目 SQLite 成长记忆",
   "type": "module",
   "engines": {
     "node": ">=22.20.0"
@@ -10,7 +10,7 @@
   "scripts": {
     "mcp": "node scripts/mcp.mjs",
     "test": "node --test",
-    "check": "node --check skills/vibemind/scripts/vibemind.mjs"
+    "check": "node --check skills/vibemind/scripts/vibemind.mjs && node --check skills/vibemind/scripts/discovery.mjs && node --check skills/vibemind/scripts/growth.mjs && node --check scripts/mcp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.1",

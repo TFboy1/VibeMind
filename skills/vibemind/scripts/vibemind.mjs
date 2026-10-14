@@ -6,21 +6,23 @@ import buffer from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { createRoadmapReader, validateDiscovery, validateMirrors, validatePreferences, scanProject, searchTopics, parseCatalogId, buildRecommendation, invitationPolicy, DEFAULT_MIRRORS } from './discovery.mjs';
+import { GROWTH_SCHEMA, preferencesOf, sessionOf, growthSnapshot, growthHead, validateGrowth, applyGrowth, listOpportunities } from './growth.mjs';
 
-export const VERSION = '0.4.0';
-export const DATABASE_VERSION = 2;
-export const CAPABILITIES = ['store_binding', 'operation_receipts', 'versioned_mode', 'sharing_policy', 'history_paging', 'recoverable_init', 'graph_cas', 'explicit_correction', 'project_purge', 'store_generation'];
+export const VERSION = '0.5.0';
+export const DATABASE_VERSION = 3;
+export const CAPABILITIES = ['store_binding', 'operation_receipts', 'versioned_mode', 'sharing_policy', 'history_paging', 'recoverable_init', 'graph_cas', 'explicit_correction', 'project_purge', 'store_generation', 'roadmap_discovery', 'growth_feedback', 'invitation_budget'];
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
 export const runtimeSupported = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 20);
 const { DatabaseSync, backup: sqliteBackup } = runtimeSupported ? await import('node:sqlite') : {};
 const { isUtf8 } = buffer;
-const COMMANDS = new Set(['init', 'status', 'context', 'record', 'pause', 'resume', 'user', 'record-user', 'projects', 'knowledge', 'history', 'get', 'operation', 'doctor', 'configure', 'migrate', 'recover-lock', 'correct', 'purge', 'backup']);
-const PROJECT_READS = ['status', 'context', 'get', 'operation'];
+const COMMANDS = new Set(['init', 'status', 'context', 'record', 'pause', 'resume', 'user', 'record-user', 'projects', 'knowledge', 'history', 'get', 'operation', 'doctor', 'configure', 'migrate', 'recover-lock', 'correct', 'purge', 'backup', 'discover', 'opportunities', 'extensions']);
+const PROJECT_READS = ['status', 'context', 'get', 'operation', 'opportunities'];
 const MUTATIONS = ['record', 'pause', 'resume', 'record-user', 'correct', 'purge'];
 const WRITE_KEYS = ['expectedRevision', 'expectedStoreId', 'expectedProjectId', 'operationId', 'source'];
 const STAGES = new Set(['reasoning', 'design', 'implementation', 'completed']);
 const STATE_KEYS = ['schemaVersion', 'revision', 'mode', 'profile', 'projectMap', 'cards', 'decisions', 'mapBasis'];
-const PATCH_KEYS = [...WRITE_KEYS, 'expectedGraphRevision', 'sharing', 'profile', 'projectMap', 'cards', 'decisions', 'concepts', 'links', 'evidence', 'retractEvidence', 'removeAliases'];
+const PATCH_KEYS = [...WRITE_KEYS, 'expectedGraphRevision', 'sharing', 'profile', 'projectMap', 'cards', 'decisions', 'concepts', 'links', 'evidence', 'retractEvidence', 'removeAliases', 'growth'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPLICATION_ID = 0x564d494e;
 export const LIMITS = Object.freeze({ textBytes: 128 * 1024, patchBytes: 512 * 1024, stateBytes: 512 * 1024, responseBytes: 2 * 1024 * 1024, transportBytes: 1024 * 1024 });
@@ -282,6 +284,10 @@ function validatePatch(patch) {
     const concept = patch.concepts?.find(value => value.id === item.conceptId);
     if (concept && [concept.id, concept.title, ...(concept.aliases ?? [])].some(value => normalize(value) === normalize(item.alias))) fail('INVALID_INPUT', '不能在同批删除并重新加入同一概念的同一别名。');
   }
+  if (patch.growth !== undefined) {
+    uuid(patch.expectedProjectId, 'expectedProjectId');
+    validateGrowth(patch.growth, patch.expectedProjectId.toLowerCase(), patch.source);
+  }
   checkSize(patch, LIMITS.patchBytes, '单批记录');
   validateWrite(patch);
   if (patch.removeAliases?.length) revision(patch.expectedGraphRevision, 'INVALID_INPUT');
@@ -321,6 +327,7 @@ CREATE TABLE evidence (
 CREATE INDEX evidence_concept ON evidence(concept_id, kind);
 CREATE TABLE snapshots (scope TEXT NOT NULL, revision INTEGER NOT NULL, content TEXT NOT NULL CHECK(json_valid(content)), PRIMARY KEY(scope, revision)) STRICT;
 ${STORE_SCHEMA}
+${GROWTH_SCHEMA}
 PRAGMA application_id = ${APPLICATION_ID};
 PRAGMA user_version = ${DATABASE_VERSION};
 `;
@@ -346,14 +353,20 @@ export function storageLocation(options = {}) {
   const configFile = options.configFile ?? process.env.VIBEMIND_CONFIG ?? path.join(os.homedir(), '.vibemind', 'config.json');
   if (typeof configFile !== 'string' || !path.isAbsolute(configFile)) fail('USAGE', 'VIBEMIND_CONFIG 必须是绝对文件路径。');
   let config;
-  if (options.home === undefined && process.env.VIBEMIND_HOME === undefined) {
-    safeParents(path.dirname(configFile));
-    const stat = safeEntry(configFile);
-    if (stat) {
-      if (stat.size > 8192) fail('INVALID_CONFIG', '用户配置过大；保留文件，不使用其他目录替代。');
-      config = parseJson(fs.readFileSync(configFile), 'INVALID_CONFIG');
-      object(config, ['schemaVersion', 'memoryHome'], 'INVALID_CONFIG', '用户配置');
-      if (config.schemaVersion !== 1) fail('INVALID_CONFIG', '用户配置版本不支持。');
+  if (options.home === undefined || options.configFile !== undefined) {
+    try {
+      safeParents(path.dirname(configFile));
+      const stat = safeEntry(configFile);
+      if (stat) {
+        if (stat.size > 8192) fail('INVALID_CONFIG', '用户配置过大；保留文件。');
+        config = parseJson(fs.readFileSync(configFile), 'INVALID_CONFIG');
+        object(config, ['schemaVersion', 'memoryHome', 'roadmapMirrors'], 'INVALID_CONFIG', '用户配置');
+        if (config.schemaVersion !== 1) fail('INVALID_CONFIG', '用户配置版本不支持。');
+        if (config.roadmapMirrors !== undefined) validateMirrors(config.roadmapMirrors);
+      }
+    } catch (failure) {
+      if (!process.env.VIBEMIND_HOME || options.configFile !== undefined) { failure.code = 'INVALID_CONFIG'; throw failure; }
+      config = undefined;
     }
   }
   const directory = options.home ?? process.env.VIBEMIND_HOME ?? config?.memoryHome ?? path.join(os.homedir(), '.vibemind');
@@ -361,9 +374,9 @@ export function storageLocation(options = {}) {
   const memoryHome = path.resolve(directory);
   safeParents(memoryHome);
   return { memoryHome, databaseFile: path.join(memoryHome, 'memory.sqlite'), configFile,
+    roadmapMirrors: config?.roadmapMirrors ?? DEFAULT_MIRRORS,
     storageSource: options.home !== undefined ? 'options' : process.env.VIBEMIND_HOME !== undefined ? 'environment' : config ? 'config' : 'default' };
 }
-
 export function databaseError(error) {
   const sqliteCode = error.errcode === undefined ? undefined : error.errcode & 255;
   if (sqliteCode === 5 || sqliteCode === 6) return Object.assign(new Error('数据库正被其他操作占用；3 秒等待已结束，操作尚未确认保存。请重读或查询操作回执，不频繁重试。'), { code: 'LOCKED' });
@@ -410,14 +423,14 @@ function openStore(options, write, allowLegacy = false) {
       db.exec('COMMIT;');
       db.close();
       return { ...location, db: null, databaseSchemaVersion: null, storeId: null, graphRevision: 0, migrationRequired: false };
-    } else if (![1, DATABASE_VERSION].includes(version) || application !== APPLICATION_ID) {
+    } else if (![1, 2, DATABASE_VERSION].includes(version) || application !== APPLICATION_ID) {
       fail('UNSUPPORTED_DATABASE', '数据库格式损坏或版本不支持；保留数据库并使用兼容版本，不会重置。');
     }
     const actualVersion = empty ? DATABASE_VERSION : version;
-    if (actualVersion === 1 && write && !allowLegacy) fail('MIGRATION_REQUIRED', '记忆库需要升级到格式 2；先运行 migrate，它会在线备份并拒绝旧客户端继续写入。');
+    if (actualVersion < DATABASE_VERSION && write && !allowLegacy) fail('MIGRATION_REQUIRED', '记忆库需要升级到格式 3；先运行 migrate，它会在线备份并拒绝旧客户端继续写入。');
     if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') fail('UNSUPPORTED_DATABASE', '数据库必须使用默认 DELETE 回滚日志；请离线检查数据库，不自动切换日志模式。');
-    const metadata = actualVersion === DATABASE_VERSION ? db.prepare('SELECT * FROM metadata WHERE id = 1').get() : null;
-    if (actualVersion === DATABASE_VERSION) {
+    const metadata = actualVersion >= 2 ? db.prepare('SELECT * FROM metadata WHERE id = 1').get() : null;
+    if (actualVersion >= 2) {
       if (!metadata) fail('INVALID_DATABASE', '数据库缺少存储身份；不会创建替代身份。');
       uuid(metadata.store_id, '数据库 storeId', 'INVALID_DATABASE');
       revision(metadata.graph_revision, 'INVALID_DATABASE');
@@ -426,7 +439,7 @@ function openStore(options, write, allowLegacy = false) {
       if (write && metadata.writer_platform !== process.platform) fail('EXECUTION_ENVIRONMENT_MISMATCH', '此库由另一个操作系统管理；通过同一系统的服务共享，不跨 Windows/WSL 直接写同一 SQLite 文件。');
     }
     return { ...location, db, databaseSchemaVersion: actualVersion, storeId: metadata?.store_id ?? null,
-      graphRevision: metadata?.graph_revision ?? 0, writerPlatform: metadata?.writer_platform ?? null, migrationRequired: actualVersion === 1 };
+      graphRevision: metadata?.graph_revision ?? 0, writerPlatform: metadata?.writer_platform ?? null, migrationRequired: actualVersion < DATABASE_VERSION };
   } catch (error) {
     db?.close();
     throw databaseError(error);
@@ -490,14 +503,14 @@ function userContext(db) {
     text(value.profile, 'INVALID_STATE', 'userProfile');
   }
   let userSource = null;
-  if (db && db.prepare('PRAGMA user_version').get().user_version === DATABASE_VERSION) {
+  if (db && db.prepare('PRAGMA user_version').get().user_version >= 2) {
     const latest = db.prepare("SELECT result FROM operations WHERE command='record-user' ORDER BY rowid DESC LIMIT 1").get();
     if (latest) {
       const receipt = parseJson(latest.result, 'INVALID_STATE');
       if (receipt.userRevision === value?.revision) userSource = receipt.userSource ?? null;
     }
   }
-  return { userRevision: value?.revision ?? 0, userProfile: value?.profile ?? '', userSource };
+  return { userRevision: value?.revision ?? 0, userProfile: value?.profile ?? '', userSource, learningPreferences: preferencesOf(db) };
 }
 
 function projectSummary(row, location, state) {
@@ -517,6 +530,7 @@ const evidenceValue = ({ sourceJson, ...value }) => ({ ...value, ...(sourceJson 
 
 function graphSnapshot(db, projectId, incomingConcepts = []) {
   return {
+    ...growthSnapshot(db, projectId),
     concepts: db.prepare(`SELECT c.id, c.title FROM concepts c WHERE
       EXISTS(SELECT 1 FROM card_concepts l WHERE l.project_id = ? AND l.concept_id = c.id)
       OR c.id IN (SELECT value FROM json_each(?)) ORDER BY c.id`).all(projectId, JSON.stringify(incomingConcepts))
@@ -672,7 +686,7 @@ function historyCursor(db, conceptId, viewer, after, upper, kind) {
 }
 
 function conceptHistory(db, options, viewer = '') {
-  if (!db || db.prepare('PRAGMA user_version').get().user_version !== DATABASE_VERSION) fail('MIGRATION_REQUIRED', '分页历史需要格式 2 的数据库。');
+  if (!db || db.prepare('PRAGMA user_version').get().user_version < 2) fail('MIGRATION_REQUIRED', '分页历史需要格式 2 的数据库。');
   const exact = selectConcept(db, options, viewer);
   const limit = options.limit ?? 20;
   if (!exact) {
@@ -750,6 +764,7 @@ function context(location, state, options, db) {
     ...summary(location, state),
     profile: state.profile,
     ...userContext(db),
+    ...growthHead(db, options.viewerProjectId),
     projectMap: state.projectMap,
     cardIndex: state.cards.map(({ id, title }) => ({ id, title })),
     ...(state.mapBasis ? { mapBasis: state.mapBasis } : {}),
@@ -791,16 +806,17 @@ export function renderContext(value) {
 function validateOptions(command, options) {
   if (!COMMANDS.has(command)) fail('USAGE', `不支持的命令：${command}`);
   const allowed = ['home', 'configFile'];
-  if (['init', ...PROJECT_READS, ...MUTATIONS, 'recover-lock', 'doctor', 'knowledge', 'history'].includes(command)) allowed.push('cwd');
-  if (['status', 'context', 'get', 'doctor', 'knowledge', 'history'].includes(command)) allowed.push('projectId');
+  if (['init', ...PROJECT_READS, ...MUTATIONS, 'recover-lock', 'doctor', 'knowledge', 'history', 'discover', 'extensions'].includes(command)) allowed.push('cwd');
+  if (['status', 'context', 'get', 'doctor', 'knowledge', 'history', 'discover', 'opportunities', 'extensions'].includes(command)) allowed.push('projectId');
   if (['context', 'knowledge', 'history'].includes(command)) allowed.push('topic', 'conceptId');
-  if (['knowledge', 'history'].includes(command)) allowed.push('limit');
+  if (['knowledge', 'history', 'opportunities'].includes(command)) allowed.push('limit');
+  if (command === 'opportunities') allowed.push('cursor', 'status', 'roadmap');
   if (command === 'knowledge') allowed.push('depth');
   if (command === 'history') allowed.push('cursor', 'kind');
   if (command === 'get') allowed.push('kind', 'id');
   if (command === 'operation') allowed.push('operationId');
   if (command === 'init') allowed.push('newProject', 'attachProjectId', 'sharing', 'rebindStoreId');
-  if (command === 'configure') allowed.push('memoryHome');
+  if (command === 'configure') allowed.push('memoryHome', 'roadmapMirrors');
   if (command === 'recover-lock') allowed.push('lockToken');
   if (command === 'backup') allowed.push('output');
   if (command === 'migrate') allowed.push('rotateStoreId', 'expectedStoreId');
@@ -823,7 +839,13 @@ function validateOptions(command, options) {
   if (options.newProject && options.attachProjectId) fail('USAGE', '不能同时建立独立项目和恢复既有身份。');
   if (command === 'operation') uuid(options.operationId, 'operationId', 'USAGE');
   if (command === 'recover-lock') uuid(options.lockToken, 'lockToken', 'USAGE');
-  if (command === 'configure' && (!options.memoryHome || !path.isAbsolute(options.memoryHome))) fail('USAGE', 'configure 需要绝对 memoryHome。');
+  if (command === 'configure') {
+    if (options.memoryHome !== undefined && !path.isAbsolute(options.memoryHome)) fail('USAGE', 'memoryHome 必须是绝对路径。');
+    if (options.roadmapMirrors !== undefined) validateMirrors(options.roadmapMirrors);
+    if (options.memoryHome === undefined && options.roadmapMirrors === undefined) fail('USAGE', 'configure 需要 memoryHome 或 roadmapMirrors。');
+  }
+  if (command === 'discover' && options.cwd === undefined && options.projectId === undefined) fail('USAGE', 'discover 需要 --cwd 或 --project-id。');
+  if (options.cursor && options.cursor.length > 8192) fail('INVALID_CURSOR', '分页标记过大。');
   if (command === 'get' && (!['card', 'decision', 'evidence', 'snapshot'].includes(options.kind) || !options.id)) fail('USAGE', 'get 需要 kind（card/decision/evidence/snapshot）和 id。');
   if (command === 'history' && options.kind !== undefined && !['explained', 'applied'].includes(options.kind)) fail('USAGE', 'history.kind 必须是 explained 或 applied。');
   if (command === 'backup' && (!options.output || !path.isAbsolute(options.output))) fail('USAGE', 'backup 需要 --output 绝对文件路径。');
@@ -905,7 +927,7 @@ function initialize(options) {
 }
 
 function storeLocation(store) {
-  const graphRevision = store.db && store.databaseSchemaVersion === DATABASE_VERSION
+  const graphRevision = store.db && store.databaseSchemaVersion >= 2
     ? store.db.prepare('SELECT graph_revision FROM metadata WHERE id = 1').get().graph_revision : store.graphRevision ?? 0;
   return { memoryHome: store.memoryHome, databaseFile: store.databaseFile, configFile: store.configFile, storageSource: store.storageSource,
     storeId: store.storeId ?? null, graphRevision, writerPlatform: store.writerPlatform ?? null, databaseSchemaVersion: store.databaseSchemaVersion ?? null,
@@ -981,27 +1003,31 @@ async function migrateStore(options) {
       store.db.exec('COMMIT;');
       return result;
     }
-    store.db.exec(`ALTER TABLE projects ADD COLUMN sharing TEXT NOT NULL DEFAULT 'summary' CHECK(sharing IN ('private','summary','full'));
-      ALTER TABLE concepts ADD COLUMN legacy_global INTEGER NOT NULL DEFAULT 0 CHECK(legacy_global IN (0,1));
-      ALTER TABLE aliases ADD COLUMN legacy_global INTEGER NOT NULL DEFAULT 0 CHECK(legacy_global IN (0,1));
-      UPDATE concepts SET legacy_global=1 WHERE NOT EXISTS(SELECT 1 FROM card_concepts l WHERE l.concept_id=concepts.id);
-      UPDATE aliases SET legacy_global=1 WHERE concept_id IN (SELECT id FROM concepts WHERE legacy_global=1);
-      ALTER TABLE evidence ADD COLUMN sequence INTEGER;
-      ALTER TABLE evidence ADD COLUMN source TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(source));
-      UPDATE evidence SET sequence = rowid;
-      CREATE UNIQUE INDEX evidence_sequence ON evidence(sequence);
-      ${STORE_SCHEMA}
-      INSERT INTO concept_sources SELECT DISTINCT concept_id, project_id FROM card_concepts;
-      INSERT INTO alias_sources SELECT a.name, s.project_id FROM aliases a JOIN concept_sources s ON s.concept_id = a.concept_id;
-      INSERT OR IGNORE INTO withdrawn_evidence SELECT substr(s.scope, 9), json_extract(e.value, '$.id')
-        FROM snapshots s, json_each(s.content, '$.evidence') e JOIN projects p ON p.id = substr(s.scope, 9)
-        WHERE s.scope LIKE 'project:%' AND NOT EXISTS(SELECT 1 FROM evidence current WHERE current.project_id = p.id AND current.id = json_extract(e.value, '$.id'));
-      PRAGMA user_version = ${DATABASE_VERSION};`);
-    const lastSequence = store.db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM evidence').get().value;
-    const storeId = randomUUID();
-    store.db.prepare('INSERT INTO metadata VALUES (1, ?, 0, ?, ?)').run(storeId, lastSequence, process.platform);
-    for (const row of store.db.prepare('SELECT id,path FROM projects WHERE path_key IS NOT NULL').all()) store.db.prepare('UPDATE projects SET path_key=? WHERE id=?').run(pathKey(row.path), row.id);
-    store.databaseSchemaVersion = DATABASE_VERSION; store.storeId = storeId; store.writerPlatform = process.platform; store.migrationRequired = false;
+    if (store.databaseSchemaVersion === 1) {
+      store.db.exec(`ALTER TABLE projects ADD COLUMN sharing TEXT NOT NULL DEFAULT 'summary' CHECK(sharing IN ('private','summary','full'));
+        ALTER TABLE concepts ADD COLUMN legacy_global INTEGER NOT NULL DEFAULT 0 CHECK(legacy_global IN (0,1));
+        ALTER TABLE aliases ADD COLUMN legacy_global INTEGER NOT NULL DEFAULT 0 CHECK(legacy_global IN (0,1));
+        UPDATE concepts SET legacy_global=1 WHERE NOT EXISTS(SELECT 1 FROM card_concepts l WHERE l.concept_id=concepts.id);
+        UPDATE aliases SET legacy_global=1 WHERE concept_id IN (SELECT id FROM concepts WHERE legacy_global=1);
+        ALTER TABLE evidence ADD COLUMN sequence INTEGER;
+        ALTER TABLE evidence ADD COLUMN source TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(source));
+        UPDATE evidence SET sequence = rowid;
+        CREATE UNIQUE INDEX evidence_sequence ON evidence(sequence);
+        ${STORE_SCHEMA}
+        INSERT INTO concept_sources SELECT DISTINCT concept_id, project_id FROM card_concepts;
+        INSERT INTO alias_sources SELECT a.name, s.project_id FROM aliases a JOIN concept_sources s ON s.concept_id = a.concept_id;
+        INSERT OR IGNORE INTO withdrawn_evidence SELECT substr(s.scope, 9), json_extract(e.value, '$.id')
+          FROM snapshots s, json_each(s.content, '$.evidence') e JOIN projects p ON p.id = substr(s.scope, 9)
+          WHERE s.scope LIKE 'project:%' AND NOT EXISTS(SELECT 1 FROM evidence current WHERE current.project_id = p.id AND current.id = json_extract(e.value, '$.id'));
+        PRAGMA user_version = ${DATABASE_VERSION};`);
+      const lastSequence = store.db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM evidence').get().value;
+      const storeId = randomUUID();
+      store.db.prepare('INSERT INTO metadata VALUES (1, ?, 0, ?, ?)').run(storeId, lastSequence, process.platform);
+      for (const row of store.db.prepare('SELECT id,path FROM projects WHERE path_key IS NOT NULL').all()) store.db.prepare('UPDATE projects SET path_key=? WHERE id=?').run(pathKey(row.path), row.id);
+      store.storeId = storeId;
+    }
+    store.db.exec(GROWTH_SCHEMA + "\nPRAGMA user_version = 3;");
+    store.databaseSchemaVersion = DATABASE_VERSION; store.writerPlatform = process.platform; store.migrationRequired = false;
     const result = { ...storeLocation(store), migrated: true, backupFile: output };
     checkResponse(result);
     store.db.exec('COMMIT;');
@@ -1016,12 +1042,22 @@ function configureStore(options) {
   const configFile = options.configFile ?? process.env.VIBEMIND_CONFIG ?? path.join(os.homedir(), '.vibemind', 'config.json');
   if (!path.isAbsolute(configFile)) fail('USAGE', '配置文件路径必须绝对。');
   safeParents(path.dirname(configFile));
+  let config = { schemaVersion: 1 };
+  if (safeEntry(configFile)) {
+    config = parseJson(fs.readFileSync(configFile), 'INVALID_CONFIG');
+    object(config, ['schemaVersion', 'memoryHome', 'roadmapMirrors'], 'INVALID_CONFIG', '用户配置');
+    if (config.schemaVersion !== 1) fail('INVALID_CONFIG', '用户配置版本不支持。');
+  }
+  if (options.memoryHome !== undefined) { safeParents(options.memoryHome); config.memoryHome = path.resolve(options.memoryHome); }
+  if (options.roadmapMirrors !== undefined) config.roadmapMirrors = options.roadmapMirrors;
+  if (config.memoryHome === undefined) config.memoryHome = path.join(os.homedir(), '.vibemind');
+  if (!path.isAbsolute(config.memoryHome)) fail('INVALID_CONFIG', '已有 memoryHome 无效，保留配置。');
+  if (config.roadmapMirrors !== undefined) validateMirrors(config.roadmapMirrors);
+  checkSize(config, 8192, '共享配置');
   fs.mkdirSync(path.dirname(configFile), { recursive: true, mode: 0o700 });
-  safeParents(options.memoryHome);
-  writeJsonFile(configFile, { schemaVersion: 1, memoryHome: path.resolve(options.memoryHome) });
-  return { configFile, configuredMemoryHome: path.resolve(options.memoryHome), environmentOverride: process.env.VIBEMIND_HOME ?? null, softwareVersion: VERSION };
+  writeJsonFile(configFile, config);
+  return { configFile, configuredMemoryHome: config.memoryHome, roadmapMirrors: config.roadmapMirrors ?? DEFAULT_MIRRORS, environmentOverride: process.env.VIBEMIND_HOME ?? null, softwareVersion: VERSION };
 }
-
 function initializationLock(location) {
   const file = path.join(location.stateDir, '.lock'), stat = safeEntry(file);
   if (!stat) return { locked: false };
@@ -1051,11 +1087,15 @@ function recoverLock(options) {
 
 function validateMutation(command, input) {
   if (command === 'record') return validatePatch(input);
-  const extras = command === 'record-user' ? ['profile'] : command === 'correct'
+  const extras = command === 'record-user' ? ['profile', 'learningPreferences'] : command === 'correct'
     ? ['originProjectId', 'expectedOriginRevision', 'expectedGraphRevision', 'retractEvidence', 'removeAliases']
     : command === 'purge' ? ['originProjectId', 'expectedOriginRevision', 'confirmProjectId', 'forgetUserProfile', 'expectedUserRevision'] : [];
   object(input, [...WRITE_KEYS, ...extras], 'INVALID_INPUT', `${command} 输入`);
-  if (command === 'record-user') text(input.profile, 'INVALID_INPUT', 'profile');
+  if (command === 'record-user') {
+    if (input.profile === undefined && input.learningPreferences === undefined) fail('INVALID_INPUT', 'record-user 需要 profile 或 learningPreferences。');
+    if (input.profile !== undefined) text(input.profile, 'INVALID_INPUT', 'profile');
+    if (input.learningPreferences !== undefined) validatePreferences(input.learningPreferences);
+  }
   checkSize(input, LIMITS.patchBytes, '单批记录');
   validateWrite(input);
   if (['correct', 'purge'].includes(command)) {
@@ -1094,7 +1134,7 @@ function getRecord(db, row, state, options) {
   let value;
   if (options.kind === 'card' || options.kind === 'decision') value = state[options.kind === 'card' ? 'cards' : 'decisions'].find(item => item.id === options.id);
   else if (options.kind === 'evidence') {
-    if (db.prepare('PRAGMA user_version').get().user_version !== DATABASE_VERSION) fail('MIGRATION_REQUIRED', '精确证据读取需要格式 2；先迁移，旧库仍可用 knowledge 只读查询。');
+    if (db.prepare('PRAGMA user_version').get().user_version < 2) fail('MIGRATION_REQUIRED', '精确证据读取需要格式 2；先迁移，旧库仍可用 knowledge 只读查询。');
     const evidence = db.prepare(`${EVIDENCE_V2_SELECT} WHERE e.project_id=? AND e.id=?`).get(row.id, options.id);
     value = evidence && evidenceValue(evidence);
   } else {
@@ -1103,6 +1143,93 @@ function getRecord(db, row, state, options) {
     value = record && parseJson(record.content, 'INVALID_STATE');
   }
   return { kind: options.kind, id: options.id, found: value !== undefined, record: value ?? null, revision: state.revision };
+}
+
+async function discoverCommand(command, options, input) {
+  if (command === 'discover') validateDiscovery(input);
+  const targeted = options.cwd !== undefined || options.projectId !== undefined;
+  const initial = targeted ? execute('status', options) : null;
+  if (initial && !initial.initialized && initial.reason !== 'not_initialized') fail(initial.reason === 'store_mismatch' ? 'STORE_MISMATCH' : 'MISSING_PROJECT_RECORD', '先诊断已有项目连接，不使用空学习历史替代。');
+  const sharedOptions = { ...(options.home ? { home: options.home } : {}), ...(options.configFile ? { configFile: options.configFile } : {}) };
+  const user = execute('user', sharedOptions);
+  const preferences = user.learningPreferences;
+  const storage = storageLocation(options);
+  const reader = createRoadmapReader({ mirrors: storage.roadmapMirrors });
+  const base = {
+    softwareVersion: VERSION, apiVersion: 2, storeId: initial?.storeId ?? user.storeId,
+    projectId: initial?.projectId ?? null, initialized: initial?.initialized ?? false,
+    learningPreferences: preferences, cacheDirectory: reader.cacheDir,
+    ...(command === 'discover' ? { action: input.action, projectAnalysis: options.cwd ? scanProject(locate(options.cwd).project) : { facts: [], diagnostics: [] } } : {}),
+  };
+  try {
+    const head = command === 'discover' && input.action === 'recommend' ? { data: { sha: input.version }, stale: false } : await reader.head();
+    const version = head.data.sha;
+    const routeResult = await reader.routes(version);
+    const routes = routeResult.data.map(item => ({ ...item, enabled: preferences.roadmaps.includes('*') || preferences.roadmaps.includes(item.id) }));
+    const stale = head.stale || routeResult.stale;
+    if (command === 'extensions') return { ...base, version, routes, sourceStatus: stale ? 'stale' : 'available', sources: { repository: 'nilbuild/developer-roadmap', mirrors: storage.roadmapMirrors, fetchedFrom: routeResult.fetchedFrom, fetchedAt: routeResult.fetchedAt }, diagnostics: reader.diagnostics };
+    const selected = input.action === 'recommend' ? [...new Set(input.matches.map(item => parseCatalogId(item.catalogId).roadmap))] : input.roadmaps ?? [];
+    const enabled = selected.filter(id => routes.some(item => item.id === id && item.enabled));
+    const disabled = selected.filter(id => !enabled.includes(id));
+    const topicResults = await Promise.allSettled(enabled.map(id => reader.topics(version, id)));
+    const topics = topicResults.flatMap((result, i) => {
+      if (result.status === 'fulfilled') return result.value.data.map(topic => ({ ...topic, stale: Boolean(stale || result.value.stale), summary: reader.cachedSummary(topic) }));
+      reader.diagnostics.push({ code: result.reason.code ?? 'SOURCE_UNAVAILABLE', roadmap: enabled[i], message: result.reason.message }); return [];
+    }).sort((a, b) => (a.catalogId === b.catalogId ? 0 : a.catalogId < b.catalogId ? -1 : 1));
+    const memoryOptions = initial?.initialized ? options : sharedOptions;
+    const historyFor = query => execute('knowledge', { ...memoryOptions, ...query, limit: 20, depth: 1 });
+    const position = (input.anchors ?? []).map(anchor => {
+      const history = historyFor(anchor.conceptId ? { conceptId: anchor.conceptId } : { topic: anchor.topic });
+      return { ...anchor, mastery: 'unknown', history };
+    });
+    if (input.action === 'search') {
+      const queries = [...(input.queries ?? [input.taskSummary]), ...(input.anchors ?? []).map(item => item.topic ?? item.conceptId)];
+      const candidates = await searchTopics(topics, queries);
+      return { ...base, version, position, routes: selected.length ? routes.filter(item => selected.includes(item.id)) : routes,
+        candidates, sourceStatus: topicResults.some(result => result.status === 'rejected') ? 'partial' : stale ? 'stale' : 'available',
+        needsContext: !selected.length || candidates.length === 0, disabledRoadmaps: disabled, diagnostics: reader.diagnostics };
+    }
+    const material = await Promise.allSettled(input.matches.map(async match => {
+      const topic = topics.find(item => item.catalogId === match.catalogId);
+      if (!topic) throw Object.assign(new Error('路线被禁用、节点不存在或目录不可用。'), { code: 'SOURCE_NODE_NOT_FOUND' });
+      const document = await reader.document(topic);
+      document.stale = Boolean(document.stale || topic.stale);
+      let mapping;
+      if (initial?.initialized) mapping = withStore(options, false, db => db && db.prepare('PRAGMA user_version').get().user_version >= 3
+        ? db.prepare('SELECT json_extract(candidate,\'$.memoryConceptId\') AS conceptId FROM growth_opportunities WHERE project_id=? AND catalog_id=? ORDER BY updated_at DESC LIMIT 1').get(initial.projectId, match.catalogId)?.conceptId : null);
+      const query = match.memoryConceptId || mapping ? { conceptId: match.memoryConceptId ?? mapping } : match.memoryTopic ? { topic: match.memoryTopic } : null;
+      const history = query ? historyFor(query) : { conceptId: null, alreadyExplained: false, evidence: [], explanationSummaries: [], guidance: 'not_recorded' };
+      return { recommendation: buildRecommendation(input, topic, document, history, initial?.projectId ?? null),
+        document: { catalogId: topic.catalogId, excerpt: document.data.slice(0, 4096), source: { canonicalUrl: topic.sourceUrl, version, fetchedFrom: document.fetchedFrom, fetchedAt: document.fetchedAt, stale: document.stale } } };
+    }));
+    const available = material.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+    const filtered = available.filter(item => item.recommendation.filteredReason).map(item => ({ catalogId: item.recommendation.catalogId, reason: item.recommendation.filteredReason }));
+    material.forEach((result, i) => { if (result.status === 'rejected') filtered.push({ catalogId: input.matches[i].catalogId, reason: result.reason.code ?? 'SOURCE_UNAVAILABLE' }); });
+    const eligible = available.map(item => item.recommendation).filter(item => !item.filteredReason).sort((a, b) => b.score - a.score || (a.catalogId === b.catalogId ? 0 : a.catalogId < b.catalogId ? -1 : 1));
+    const current = targeted ? execute('status', options) : initial;
+    if (current?.storeId !== initial?.storeId || current?.projectId !== initial?.projectId) fail('STORE_MISMATCH', '检索期间学习库或项目身份变化，请重新读取状态。');
+    const latestPreferences = execute('user', sharedOptions).learningPreferences;
+    const session = input.source?.host && input.source?.sessionId ? { host: input.source.host, sessionId: input.source.sessionId } : null;
+    const sessionState = current?.initialized && session ? withStore(options, false, (db, store) => {
+      if (store.storeId !== current.storeId) fail('STORE_MISMATCH', '学习库身份变化。');
+      return sessionOf(db, current.projectId, session);
+    }) : null;
+    const invitation = invitationPolicy({ ...current, preferences: latestPreferences, session, sessionState, constraints: input.constraints });
+    if (eligible[0] && !latestPreferences.roadmaps.includes('*') && !latestPreferences.roadmaps.includes(eligible[0].roadmap)) {
+      invitation.eligible = false; invitation.reasons.push('roadmap_disabled');
+    }
+    if (!eligible.length) { invitation.eligible = false; invitation.reasons.push('no_candidate'); }
+    return { ...base, revision: current?.revision, mode: current?.mode, version, position, opportunities: eligible.slice(0, 3),
+      recommendedId: eligible[0]?.id ?? null, deferred: eligible.slice(3).map(item => ({ catalogId: item.catalogId, reason: 'lower_rank' })), filtered,
+      documents: available.map(item => item.document), invitation, disabledRoadmaps: disabled,
+      sourceStatus: available.length < input.matches.length ? 'partial' : available.some(item => item.document.source.stale) ? 'stale' : 'available',
+      diagnostics: reader.diagnostics };
+  } catch (failure) {
+    if (!['SOURCE_UNAVAILABLE', 'SOURCE_HTTP_ERROR', 'INVALID_SOURCE', 'SOURCE_TOO_LARGE', 'SOURCE_CHECKSUM_MISMATCH'].includes(failure.code)) throw failure;
+    return { ...base, sourceStatus: 'unavailable', candidates: [], opportunities: [], routes: [], recommendedId: null,
+      invitation: { eligible: false, reasons: ['source_unavailable'], requiresReservation: true },
+      diagnostics: [...reader.diagnostics, { code: failure.code, message: failure.message }] };
+  }
 }
 
 export function execute(command, options = {}, input) {
@@ -1116,6 +1243,7 @@ export function execute(command, options = {}, input) {
     input = { ...input };
     for (const key of ['expectedStoreId','expectedProjectId','operationId','originProjectId','confirmProjectId']) if (input[key]) input[key] = input[key].toLowerCase();
   }
+  if (['discover', 'extensions'].includes(command)) return discoverCommand(command, options, input);
   if (command === 'init') return initialize(options);
   if (command === 'backup') return createBackup(options);
   if (command === 'migrate') return migrateStore(options);
@@ -1134,12 +1262,12 @@ export function execute(command, options = {}, input) {
       return { ...storage, projects, errors };
     }
     if (command === 'operation') {
-      const receipt = db && store.databaseSchemaVersion === DATABASE_VERSION ? db.prepare('SELECT result FROM operations WHERE id=?').get(options.operationId.toLowerCase()) : null;
+      const receipt = db && store.databaseSchemaVersion >= 2 ? db.prepare('SELECT result FROM operations WHERE id=?').get(options.operationId.toLowerCase()) : null;
       return { ...storage, operationId: options.operationId.toLowerCase(), found: Boolean(receipt), receipt: receipt ? parseJson(receipt.result, 'INVALID_STATE') : null };
     }
     if (command === 'doctor') {
       const counts = {};
-      if (db) for (const table of ['projects', 'concepts', 'evidence', 'snapshots', ...(store.databaseSchemaVersion === DATABASE_VERSION ? ['operations', 'withdrawn_evidence'] : [])]) counts[table] = db.prepare(`SELECT count(*) AS value FROM ${table}`).get().value;
+      if (db) for (const table of ['projects', 'concepts', 'evidence', 'snapshots', ...(store.databaseSchemaVersion >= 2 ? ['operations', 'withdrawn_evidence'] : [])]) counts[table] = db.prepare(`SELECT count(*) AS value FROM ${table}`).get().value;
       let projectStatus = null;
       if (options.cwd !== undefined || options.projectId !== undefined) {
         try { projectStatus = execute('status', options); } catch (error) { projectStatus = { error: { code: error.code ?? 'IO_ERROR', message: error.message, details: error.details } }; }
@@ -1194,6 +1322,7 @@ export function execute(command, options = {}, input) {
     }
     if (command === 'context') return { ...context(location ?? { project: row.path }, state, { ...options, viewerProjectId: projectId }, db), ...base };
     if (command === 'get') return { ...storage, ...projectHead(row, location, state), ...getRecord(db, row, state, options) };
+    if (command === 'opportunities') return { ...base, ...listOpportunities(db, projectId, options, store.storeId) };
     if (state.mode === 'paused' && ['record', 'record-user'].includes(command)) fail('PAUSED', '来源项目伴学已暂停；不自动恢复来保存学习记录。');
     if (command !== 'record-user' && input.expectedRevision !== state.revision) conflict(state, input);
     if (input.removeAliases?.length && input.expectedGraphRevision !== storage.graphRevision) fail('GRAPH_CONFLICT', '全局图谱已变化；核对当前别名归属后再更正。', { currentGraphRevision: storage.graphRevision });
@@ -1203,11 +1332,14 @@ export function execute(command, options = {}, input) {
       const previous = userContext(db);
       if (previous.userRevision !== input.expectedRevision) fail('CONFLICT', '用户档案版本已变化；重新读取 user 并整合，不直接替换版本号。', { currentUserRevision: previous.userRevision });
       if (row.path !== location.project || row.path_key !== pathKey(location.project)) db.prepare('UPDATE projects SET path=?,path_key=? WHERE id=?').run(location.project, pathKey(location.project), projectId);
-      if (previous.userProfile === input.profile) return finish({ ...storage, userRevision: previous.userRevision, userSource: previous.userSource, changed: false });
+      const nextProfile = input.profile ?? previous.userProfile;
+      const nextPreferences = input.learningPreferences ?? previous.learningPreferences;
+      if (previous.userProfile === nextProfile && isDeepStrictEqual(previous.learningPreferences, nextPreferences)) return finish({ ...storage, userRevision: previous.userRevision, userSource: previous.userSource, changed: false });
       if (previous.userRevision === Number.MAX_SAFE_INTEGER) fail('INVALID_STATE', '用户档案版本达到上限；未更新。');
       saveSnapshot(db, 'user', previous.userRevision, previous, source);
-      db.prepare('UPDATE user_profile SET revision=?,profile=? WHERE id=1').run(previous.userRevision + 1, input.profile);
-      return finish({ ...storage, userRevision: previous.userRevision + 1, userSource: source, changed: true });
+      db.prepare('UPDATE user_profile SET revision=?,profile=? WHERE id=1').run(previous.userRevision + 1, nextProfile);
+      db.prepare('UPDATE learning_preferences SET value=? WHERE id=1').run(JSON.stringify(nextPreferences));
+      return finish({ ...storage, userRevision: previous.userRevision + 1, userSource: source, learningPreferences: nextPreferences, changed: true });
     }
     if (command === 'purge') {
       const targetId = input.originProjectId.toLowerCase(), target = db.prepare('SELECT * FROM projects WHERE id=?').get(targetId);
@@ -1221,6 +1353,7 @@ export function execute(command, options = {}, input) {
         db.prepare("DELETE FROM snapshots WHERE scope='user'").run();
         db.prepare("DELETE FROM operations WHERE command='record-user'").run();
         db.prepare("UPDATE user_profile SET profile='',revision=? WHERE id=1").run(user.userRevision + 1);
+        db.prepare('UPDATE learning_preferences SET value=? WHERE id=1').run(JSON.stringify({ frequency: 'normal', roadmaps: ['*'] }));
       }
       const affectedAliases = JSON.stringify(db.prepare('SELECT name FROM alias_sources WHERE project_id=?').all(targetId).map(value => value.name));
       const affectedConcepts = JSON.stringify(db.prepare('SELECT concept_id FROM concept_sources WHERE project_id=?').all(targetId).map(value => value.concept_id));
@@ -1247,8 +1380,9 @@ export function execute(command, options = {}, input) {
     } else if (command !== 'correct') next.mode = command === 'pause' ? 'paused' : 'active';
     const previousGraph = graphSnapshot(db, target.id, [...(input.concepts ?? []).map(value => value.id), ...(input.removeAliases ?? []).map(value => value.conceptId)]);
     const graphChanged = ['record', 'correct'].includes(command) && addGraph(db, target.id, next, input);
+    const growthChanged = command === 'record' && input.growth !== undefined && applyGrowth(db, target.id, next.mode, input.growth);
     const policyChanged = sharing !== target.sharing;
-    const changed = graphChanged || policyChanged || !isDeepStrictEqual(previousState, next);
+    const changed = growthChanged || graphChanged || policyChanged || !isDeepStrictEqual(previousState, next);
     if (changed) {
       if (previousState.revision === Number.MAX_SAFE_INTEGER) fail('INVALID_STATE', '写入版本达到整数上限；未更新。');
       next.revision += 1; validateState(next);
@@ -1263,7 +1397,7 @@ export function execute(command, options = {}, input) {
   });
 }
 
-const HELP = `VibeMind ${VERSION} — 本机共享学习记忆\n\n用法：node vibemind.mjs <命令> [参数]\n\n  configure     --memory-home 绝对目录，保存宿主无关的用户配置\n  doctor        查看运行时、实际库路径/ID、版本、容量及可选 --cwd 项目诊断\n  migrate       在线备份后升级格式 1；旧客户端随后拒绝写入\n                --rotate-store-id --expected-store-id UUID，备份后轮换恢复的库身份\n  init          --cwd 绝对项目目录；--sharing private|summary|full（默认 summary）\n                --new-project 建立独立复制；--attach-project-id 恢复丢失身份\n                --rebind-store-id 明确接续已恢复的库，拒绝空建\n  status/context 查看状态/上下文；读取不初始化，context 默认 Markdown，可 --json\n  get           --cwd/--project-id，--kind card|decision|evidence|snapshot --id 精确ID\n  knowledge     --topic/--concept-id，--limit 1..100 --depth 1..2；可指定来源项目\n  history       --concept-id --limit 1..100 --cursor 分页标记，可 --kind explained|applied\n  user/projects 查看共享档案/项目列表，坏项目返回独立诊断\n  record        --cwd；UTF-8 stdin JSON 更新项目及 sharing\n  record-user   --cwd；UTF-8 stdin JSON 更新通用档案\n  pause/resume  --cwd；stdin JSON 或 --expected-revision/--expected-store-id/--expected-project-id/--operation-id\n  operation     --operation-id UUID，查询持久提交回执\n  correct       --cwd；stdin JSON 明确更正 originProjectId 的错误证据/别名\n  purge         --cwd；stdin JSON 删除确认项目及修订，不删除备份/宿主聊天\n  backup        --output 未存在的绝对文件路径，在线备份成功后原子发布\n  recover-lock  --cwd --lock-token UUID，只清理确认进程已退出的初始化锁\n\n所有项目写入需要绝对 --cwd。业务写入 JSON 必须包含 expectedRevision、expectedStoreId、expectedProjectId、operationId。\n重试保留同一 operationId 和原输入；冲突整合后使用新 ID。别名纠错另带 expectedGraphRevision。\n记忆目录优先级：VIBEMIND_HOME > 共享用户配置 > ~/.vibemind；VIBEMIND_CONFIG 可选绝对配置文件。\nNode.js 22.20+；数据使用 UTF-8；单批512 KiB，MCP输入缓冲1 MiB，业务响应2 MiB。\n`;
+const HELP = `VibeMind ${VERSION} — 本机共享学习记忆\n\n用法：node vibemind.mjs <命令> [参数]\n\n  configure     --memory-home 绝对目录，保存宿主无关的用户配置；可 --roadmap-mirrors JSON\n  doctor        查看运行时、实际库路径/ID、版本、容量及可选 --cwd 项目诊断\n  migrate       在线备份后升级格式 1/2 到 3；旧客户端随后拒绝访问\n                --rotate-store-id --expected-store-id UUID，备份后轮换恢复的库身份\n  init          --cwd 绝对项目目录；--sharing private|summary|full（默认 summary）\n                --new-project 建立独立复制；--attach-project-id 恢复丢失身份\n                --rebind-store-id 明确接续已恢复的库，拒绝空建\n  status/context 查看状态/上下文；读取不初始化，context 默认 Markdown，可 --json\n  get           --cwd/--project-id，--kind card|decision|evidence|snapshot --id 精确ID\n  knowledge     --topic/--concept-id，--limit 1..100 --depth 1..2；可指定来源项目\n  history       --concept-id --limit 1..100 --cursor 分页标记，可 --kind explained|applied\n  user/projects 查看共享档案/项目列表，坏项目返回独立诊断\n  record        --cwd；UTF-8 stdin JSON 更新项目及 sharing\n  record-user   --cwd；UTF-8 stdin JSON 更新通用档案\n  pause/resume  --cwd；stdin JSON 或 --expected-revision/--expected-store-id/--expected-project-id/--operation-id\n  operation     --operation-id UUID，查询持久提交回执\n  correct       --cwd；stdin JSON 明确更正 originProjectId 的错误证据/别名\n  purge         --cwd；stdin JSON 删除确认项目及修订，不删除备份/宿主聊天\n  backup        --output 未存在的绝对文件路径，在线备份成功后原子发布\n  discover      --cwd/--project-id；UTF-8 stdin JSON，action=search/recommend 全域发现\n  opportunities --cwd/--project-id；--status --roadmap --limit --cursor 查询成长机会\n  extensions    查看完整路线目录、启用范围、镜像及访问诊断\n  recover-lock  --cwd --lock-token UUID，只清理确认进程已退出的初始化锁\n\n所有项目写入需要绝对 --cwd。业务写入 JSON 必须包含 expectedRevision、expectedStoreId、expectedProjectId、operationId。\n重试保留同一 operationId 和原输入；冲突整合后使用新 ID。别名纠错另带 expectedGraphRevision。\n记忆目录优先级：VIBEMIND_HOME > 共享用户配置 > ~/.vibemind；VIBEMIND_CONFIG 可选绝对配置文件。\nNode.js 22.20+；数据使用 UTF-8；单批512 KiB，MCP输入缓冲1 MiB，业务响应2 MiB。\n`;
 
 function readInput() {
   const chunks = [], chunk = Buffer.alloc(64 * 1024);
@@ -1295,16 +1429,16 @@ export async function main(argv = process.argv.slice(2)) {
       if (arg === '--json') json = true;
       else if (arg === '--new-project') options.newProject = true;
       else if (arg === '--rotate-store-id') options.rotateStoreId = true;
-      else if (['--cwd', '--topic', '--project-id', '--concept-id', '--output', '--limit', '--depth', '--kind', '--id', '--cursor', '--sharing', '--attach-project-id', '--rebind-store-id', '--memory-home', '--config-file', '--lock-token', '--operation-id', '--expected-revision', '--expected-store-id', '--expected-project-id'].includes(arg)) {
+      else if (['--cwd', '--topic', '--project-id', '--concept-id', '--output', '--limit', '--depth', '--kind', '--id', '--cursor', '--sharing', '--attach-project-id', '--rebind-store-id', '--memory-home', '--roadmap-mirrors', '--status', '--roadmap', '--config-file', '--lock-token', '--operation-id', '--expected-revision', '--expected-store-id', '--expected-project-id'].includes(arg)) {
         const value = args[++i];
         if (!value || value.startsWith('--')) fail('USAGE', `${arg} 缺少参数值。`);
         const key = arg.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
         if (WRITE_KEYS.includes(key) && MUTATIONS.includes(command)) writeFlags[key] = key === 'expectedRevision' ? Number(value) : value;
-        else options[key] = ['limit', 'depth'].includes(key) ? Number(value) : value;
+        else options[key] = key === 'roadmapMirrors' ? parseJson(value, 'INVALID_INPUT') : ['limit', 'depth'].includes(key) ? Number(value) : value;
       } else fail('USAGE', `不支持的参数：${arg}`);
     }
     let input;
-    if (MUTATIONS.includes(command)) {
+    if (MUTATIONS.includes(command) || command === 'discover') {
       if (['pause', 'resume'].includes(command) && Object.keys(writeFlags).length) input = writeFlags;
       else {
         if (process.stdin.isTTY) fail('USAGE', '此命令需要 UTF-8 JSON stdin 或暂停/恢复的版本参数。');

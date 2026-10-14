@@ -93,7 +93,7 @@ Installation is project-scoped by default. `--copy` uses regular files, which is
 
 #### Import the complete ZIP
 
-1. Build the complete 0.4.0 Skill ZIP from current source; see the [main README](../README.md). The old 0.1.0 ZIP writes project JSON and must be upgraded before using the new MCP.
+1. Build the complete 0.5.0 Skill ZIP from current source; see the [main README](../README.md). The old 0.1.0 ZIP writes project JSON and must be upgraded before using the new MCP.
 2. In WorkBuddy, open Skills → Add skill → Upload skill and import it. Qoder and TRAE can use the same ZIP through their native import UI.
 3. Find `vibemind` and invoke it in your target project.
 
@@ -177,7 +177,7 @@ Moved projects reconnect by ID. A copied ID is rejected if the original register
 
 Explicit corrections use `record.retractEvidence` (source-project evidence IDs) or `record.removeAliases` (`conceptId` and `alias`); previous values remain in revision snapshots. Store short summaries: new strings are limited to 128 KiB, serialized input batches and project state to 512 KiB, and MCP business results to 2 MiB, measured as UTF-8 bytes. Oversized writes roll back before commit; unfinished decisions are never silently cut. Old large records remain readable through CLI and can be shortened.
 
-Upgrade Skill, CLI and MCP together to **0.4.0**, then restart MCP. Run `migrate` to back up schema 1 online and upgrade to schema 2; old writers then refuse writes. Run `init --cwd /path/to/project` to bind the same existing project without resetting history or paused mode. Default `sharing: summary` shares lesson scope/summary while hiding other project bodies and code paths; `private` hides that source, `full` explicitly allows complete cases. Summaries must avoid private details. Alias correction requires `expectedGraphRevision`; conflicts require rereading and integrating content. Lost responses: query `operation`, retry the same ID and input; a receipt describes a past commit, not current mode. Use `get` for exact records, `history` for stable pagination, `correct` for explicit correction of deleted/paused sources and `purge` for confirmed active project deletion (not backups or host chats). After an offline backup restore, rotate identity with `migrate --rotate-store-id --expected-store-id CURRENT_ID` and rebind existing projects with `init --rebind-store-id NEW_ID` before reopening writers. See the [complete record contract](../skills/vibemind/references/records.md).
+Upgrade Skill, CLI and MCP together to **0.5.0**, then restart MCP. Run `migrate` to back up schemas 1/2 online and upgrade to schema 3; old writers then refuse writes. Run `init --cwd /path/to/project` to bind the same existing project without resetting history or paused mode. Default `sharing: summary` shares lesson scope/summary while hiding other project bodies and code paths; `private` hides that source, `full` explicitly allows complete cases. Summaries must avoid private details. Alias correction requires `expectedGraphRevision`; conflicts require rereading and integrating content. Lost responses: query `operation`, retry the same ID and input; a receipt describes a past commit, not current mode. Use `get` for exact records, `history` for stable pagination, `correct` for explicit correction of deleted/paused sources and `purge` for confirmed active project deletion (not backups or host chats). After an offline backup restore, rotate identity with `migrate --rotate-store-id --expected-store-id CURRENT_ID` and rebind existing projects with `init --rebind-store-id NEW_ID` before reopening writers. See the [complete record contract](../skills/vibemind/references/records.md).
 
 Lookup respects Git and worktree boundaries and rejects symbolic-link state paths. All unfinished decisions are restored, including those after long histories.
 
@@ -207,3 +207,17 @@ VibeMind borrows and adapts [VibeWise](https://github.com/nykooi1/vibe-wise) by 
 This project adds its adaptive coding guidance workflow, Node CLI, local stdio MCP, user-level SQLite graph, stable project identity, legacy migration, transaction snapshots, online backups and exact explanation checks across projects. Source attribution and both MIT notices are included in [NOTICE.md](../skills/vibemind/NOTICE.md).
 
 The support buttons above use the same destinations as the maintainer's [Academic Paper Writer](https://github.com/TFboy1/academic-paper-writer) project.
+
+## 0.5.0: knowledge discovery across all roadmaps
+
+Discover adjacent knowledge from any public roadmap.sh roadmap, with on-demand online reading. The host Agent chooses domains, expands multilingual queries and judges semantic relationships; local FTS5 retrieves candidates and memory rules select up to three opportunities. Unknown ability remains unknown.
+
+New CLI/MCP commands: discover (search/recommend), opportunities and extensions. Save concise candidates/feedback with record.growth; update frequency (off/normal) and route scope with record-user.learningPreferences. Existing explained/applied evidence stays separate.
+
+Active projects offer at most one invitation after task completion per known host session. Declining, deferring or requesting direct implementation stops further invitations in that session. Acceptance grants no implementation permission.
+
+Read official sources first, then capable mirrors; configure --roadmap-mirrors JSON preserves the memory path. Cache public data separately from learner records. Source failure never creates a replacement database.
+
+Update all hosts and explicitly migrate schemas 1/2 to 3 with an online backup. Schema 2 identity, revisions, paused mode and existing evidence are preserved. No vector model, bulk tutorial sync, automatic hook or frontend is added.
+
+See the [discovery contract](../skills/vibemind/references/discovery.md) and [source notices](../skills/vibemind/NOTICE.md).

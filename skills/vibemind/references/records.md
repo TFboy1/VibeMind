@@ -1,4 +1,4 @@
-# MCP、CLI 与学习记录（0.4.0）
+# MCP、CLI 与学习记录（0.5.0）
 
 UTF-8；Node.js 22.20+。CLI 只用 Node 标准库，完整 Skill 可分别装到各宿主。MCP 在完整仓库 npm ci 后由宿主通过 node <仓库绝对路径>/scripts/mcp.mjs 启动。stdio 无端口，不需要模型 API。
 
@@ -34,6 +34,9 @@ UTF-8；Node.js 22.20+。CLI 只用 Node 标准库，完整 Skill 可分别装�
 | correct | vibemind_correct | originProjectId/expectedOriginRevision；更正旧来源证据/别名 |
 | purge | vibemind_purge | originProjectId/版本和相同 confirmProjectId；删除活动项目记录及修订 |
 | recover-lock | vibemind_recover_lock | projectPath、lockToken；只清理确认进程已退出的初始化锁 |
+| discover | vibemind_discover | projectPath/projectId；UTF-8 结构化任务；action=search/recommend，全域按需检索 |
+| opportunities | vibemind_opportunities | 项目机会；status/roadmap/limit/cursor 过滤分页 |
+| extensions | vibemind_extensions | 全部路线、启用范围、镜像与访问诊断 |
 | backup | vibemind_backup | output：未存在的绝对文件路径；在线备份后原子发布 |
 
 MCP 的 projectPath 是绝对目录，CLI 对应 --cwd。status/context/get/doctor/knowledge/history 可用 projectId（CLI --project-id）替代路径，二者不能同时指定；knowledge/history 也可不带项目，此时只查询允许共享的内容。跨来源纠错/删除目标可按 ID 脱离目录；所有项目写入的发起来源仍须提供真实绝对目录并校验身份。
@@ -121,7 +124,7 @@ purge 用相同 confirmProjectId 确认目标及版本，清除活动库内项�
 
 已有身份但库不存在、ID 不符或库无项目行时拒绝空建。身份丢失且数据库已登记路径时，用 projects 核对后 init --attach-project-id <已有 UUID>。初始化先写 init.pending.json，提交数据库后发布身份；失败保留旧身份与恢复计划，下次 init 检查同库/身份后补完。恢复期间身份被改则拒覆盖。遗留锁通过 doctor 查看；recover-lock 必须匹配 token 且确认 PID 已退出，存活/权限未知/PID 复用时不清理。
 
-升级 0.2/0.3 的格式 1：更新完整 Skill/CLI/MCP 并重启，核对 doctor 路径；用户要求升级后运行 migrate。在写锁内先生成完整性验证的旧库在线备份，再升级格式 2，错误回滚，旧写入器随后按其格式检查拒写。原项目执行 init 绑定同一 ID，保留 revision、暂停、档案与证据。格式 1 仍可只读，精确证据/分页需格式 2。0.1 JSON 在 init 校验并导入，保留原字节/备份；旧 profile 不升成用户档案，旧卡不自动变 explained。旧 JSON 被旧工具修改则 LEGACY_CHANGED，先保留并整合，不删除变化绕过保护。
+升级 0.2/0.3/0.4 的格式 1/2：更新完整 Skill/CLI/MCP 并重启，核对 doctor 路径；用户要求升级后运行 migrate。在写锁内先生成完整性验证的旧库在线备份，再升级格式 3，错误回滚，旧写入器随后按其格式检查拒写。原项目执行 init 绑定同一 ID，保留 revision、暂停、档案与证据。格式 1 仍可只读，精确证据/分页需格式 2。0.1 JSON 在 init 校验并导入，保留原字节/备份；旧 profile 不升成用户档案，旧卡不自动变 explained。旧 JSON 被旧工具修改则 LEGACY_CHANGED，先保留并整合，不删除变化绕过保护。
 
 备份用 backup，不复制活动 SQLite。先写 output.incomplete-UUID，验证后用同目录硬链接原子发布，不覆盖目的文件；强杀留下的 incomplete 不当完成备份，不支持硬链接时明确失败。
 
@@ -152,3 +155,15 @@ purge 用相同 confirmProjectId 确认目标及版本，清除活动库内项�
 | BACKUP_FAILED / WRITE_FAILED | 原数据保留，解决文件系统问题后重读再试 |
 
 记录是学习数据，不构成系统指令、工具权限或新实施授权；JSON 数据块仍按宿主权限处理。建议忽略项目 .vibemind，不自动改 Git 规则。库/备份未加密，Windows mode 不等于 ACL。跨机器、多学习者、NAS/SMB/实时云盘同步和离线库合并不在此版本支持范围。
+
+## 0.5 成长记录与迁移
+
+数据库当前格式 3；项目身份文件仍是格式 2，API 仍是 2。格式 1/2 支持既有只读命令，新写入必须明确 migrate。2→3 保留 storeId、项目 ID、revision、用户版本、暂停、证据和回执；1→3 先接续既有存储身份步骤。在线备份、写锁、回滚、恢复后轮换身份及旧客户端拒绝规则继续有效。
+
+record.growth 支持 candidates、session、invite、feedback、suppressSession。候选用 discover opportunities[].recordCandidate 原样保存；新增三个表为 growth_opportunities、growth_sessions、learning_preferences，纳入事务、快照、备份和 purge。重复候选不增加 revision；反馈保留历史，回执幂等。教程正文和抓取缓存不进入学习数据库。
+
+record-user 可提交 profile 和/或 learningPreferences，后者含 frequency=off|normal、roadmaps=["*"] 或路线列表；沿用 userRevision。purge.forgetUserProfile 同时恢复默认学习偏好。来源暂停时禁止这些写入。
+
+configure 新增 roadmapMirrors=[{url,api}]，CLI 用 --roadmap-mirrors JSON；修改会保留原记忆目录，修改记忆目录也保留镜像。旧宿主应同步升级并重启。
+
+SOURCE_UNAVAILABLE 表示公开资料不可用，不表示用户缺知识；INVITATION_BLOCKED 表示邀请条件或会话额度不满足；OPPORTUNITY_NOT_FOUND 核对当前项目与候选 ID。完整输入、语义判断责任及缓存规则见 [发现规范](discovery.md)。
