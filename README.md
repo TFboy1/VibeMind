@@ -33,7 +33,7 @@ VibeMind 不要求你放弃 AI，也不要求你把每个知识点都学透。�
 
 你也可以直接把这句话发给 AI 助手，让它帮你安装：
 
-> 请帮我在当前项目安装 VibeMind Skill，确认安装完成后，再告诉我怎么开始使用。
+> 请帮我在当前项目安装 VibeMind Skill https://github.com/TFboy1/VibeMind，确认安装完成后，再告诉我怎么开始使用。
 
 安装 VibeMind Skill：
 
