@@ -31,6 +31,10 @@ VibeMind 不要求你放弃 AI，也不要求你把每个知识点都学透。�
 
 需要 Node.js **22.20.0 或更新版本**，以及支持 Agent Skills 的 AI 开发工具。
 
+你也可以直接把这句话发给 AI 助手，让它帮你安装：
+
+> 请帮我在当前项目安装 VibeMind Skill，确认安装完成后，再告诉我怎么开始使用。
+
 安装 VibeMind Skill：
 
 ```sh
